@@ -19,6 +19,7 @@ services:
       TASK_AUTOMATION_URL: http://task_automation:8000
       FOLLOW_UP_SEQUENCES_URL: http://follow_up_sequences:8000
       FEEDBACK_LOOP_URL: http://feedback_loop:8000
+      PERFORMANCE_ANALYTICS_URL: http://performance_analytics:8000
     ports:
       - "${GATEWAY_PORT:-8080}:8080"
     depends_on:
@@ -26,6 +27,7 @@ services:
       - task_automation
       - follow_up_sequences
       - feedback_loop
+      - performance_analytics
     restart: unless-stopped
 
   compliance_monitor:
@@ -52,4 +54,8 @@ services:
     expose: ["8000"]
     restart: unless-stopped
 
-  # scaffold agents (no source engine yet): performance_analytics — add service once implemented.
+  performance_analytics:
+    build: { context: ./src/agents/performance_analytics }
+    environment: *agent-env
+    expose: ["8000"]
+    restart: unless-stopped

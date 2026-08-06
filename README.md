@@ -8,7 +8,7 @@ its own service, fronted by a thin API gateway (`src/api/main.py`) that routes t
 
 ## Sub-agents
 - **feedback_loop** ✅ — Initial implementation ready. Captures predictions, outcomes, overrides, and explicit feedback; builds point-in-time labels; monitors drift and performance; and orchestrates reproducible retraining with fairness-gated promotion and A/B testing (P0–P3 of the FLS ticket + CEAAPSS-559/560). See `src/agents/feedback_loop/README.md` for details.
-- **performance_analytics** ← `(scaffold — no source engine yet)` — KPI dashboards + anomaly detection (scaffold).
+- **performance_analytics** ✅ — Initial implementation ready. Governed KPIs, multi-touch attribution, pipeline funnels, rep/team scorecards, channel effectiveness, finance reconciliation, anomaly/threshold alerts, and scheduled CSV/PDF reports (P0–P3 of the PAS ticket). See `src/agents/performance_analytics/README.md` for details.
 - **compliance_monitor** ← `Compliance-Monitoring` — Audit/governance + fair-lending.
 - **task_automation** ← `Task-Automation` — Workflow automation engine.
 - **follow_up_sequences** ← `Followup-Sequence` — Cadence / drip sequences.

@@ -14,6 +14,7 @@ AGENTS = {
     "task_automation": "task-automation",
     "follow_up_sequences": "follow-up-sequences",
     "feedback_loop": "feedback-loop",
+    "performance_analytics": "performance-analytics",
 }
 
 
@@ -21,7 +22,10 @@ def _upstream(agent: str) -> str:
     return os.environ.get(f"{agent.upper()}_URL", "")
 
 
-app = FastAPI(title="crm-operations-platform-service", summary="Feedback loop, performance analytics, compliance, task automation, follow-ups.")
+app = FastAPI(
+    title="crm-operations-platform-service",
+    summary="Feedback loop, performance analytics, compliance, task automation, follow-ups.",
+)
 
 
 @app.get("/health")
@@ -41,13 +45,16 @@ async def ready():
         for a in AGENTS:
             url = _upstream(a)
             if not url:
-                out[a] = "unset"; ready_ok = False; continue
+                out[a] = "unset"
+                ready_ok = False
+                continue
             status = None
             for hp in ("/api/v1/health", "/health", "/healthz"):
                 try:
                     r = await c.get(url.rstrip("/") + hp)
                     if r.status_code == 200:
-                        status = "ok"; break
+                        status = "ok"
+                        break
                     status = f"http {r.status_code}"
                 except Exception as e:  # noqa: BLE001
                     status = f"down: {type(e).__name__}"

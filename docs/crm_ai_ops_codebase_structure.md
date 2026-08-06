@@ -35,11 +35,39 @@ crm-operations-platform-service/
 │   │   │   └── model_retrainer.py
 │   │   │
 │   │   ├── performance_analytics/
+│   │   │   ├── app/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── main.py
+│   │   │   │   ├── core/
+│   │   │   │   │   ├── config.py
+│   │   │   │   │   └── logging.py
+│   │   │   │   ├── api/
+│   │   │   │   │   ├── health.py
+│   │   │   │   │   └── analytics.py
+│   │   │   │   ├── domain/
+│   │   │   │   │   └── models.py
+│   │   │   │   ├── metrics_collector.py
+│   │   │   │   ├── repositories.py
+│   │   │   │   ├── semantic.py
+│   │   │   │   ├── period_utils.py
+│   │   │   │   ├── dashboard_builder.py
+│   │   │   │   ├── attribution.py
+│   │   │   │   ├── reconciliation.py
+│   │   │   │   ├── anomaly_detector.py
+│   │   │   │   ├── pdf.py
+│   │   │   │   ├── service.py
+│   │   │   │   └── agent.py
+│   │   │   ├── tests/
+│   │   │   │   ├── conftest.py
+│   │   │   │   └── test_performance_analytics.py
 │   │   │   ├── __init__.py
 │   │   │   ├── agent.py
-│   │   │   ├── metrics_collector.py
-│   │   │   ├── dashboard_builder.py
-│   │   │   └── anomaly_detector.py
+│   │   │   ├── pyproject.toml
+│   │   │   ├── uv.lock
+│   │   │   ├── Dockerfile
+│   │   │   ├── Makefile
+│   │   │   ├── .env.example
+│   │   │   └── README.md
 │   │   │
 │   │   ├── compliance_monitor/
 │   │   │   ├── __init__.py

@@ -1,8 +1,16 @@
-"""performance_analytics agent — SCAFFOLD (no source engine yet). KPI dashboards + anomaly detection (scaffold).
+"""Performance Analytics Agent — top-level re-export.
 
-Implement the engine here or drop a source repo in, then add it to
-docker-compose.yml + src/api/main.py AGENTS."""
+The engine implementation lives in ``app/``. This module re-exports the public
+agent so the package layout matches the codebase-structure guide.
+"""
 
+import sys
+from pathlib import Path
 
-def run(*args, **kwargs):
-    raise NotImplementedError("performance_analytics not implemented yet")
+_package_dir = str(Path(__file__).parent)
+if _package_dir not in sys.path:
+    sys.path.insert(0, _package_dir)
+
+from app.agent import PerformanceAnalyticsAgent  # noqa: E402
+
+__all__ = ["PerformanceAnalyticsAgent"]

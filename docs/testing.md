@@ -120,13 +120,134 @@ OpenAPI docs are available at `http://127.0.0.1:8009/docs`.
 | `ruff check app tests` | no errors |
 | `ruff format app tests` | formats in place |
 
-## 7. CI Notes
+## 7. Performance Analytics Agent Tests
+
+The agent has its own isolated test suite under `src/agents/performance_analytics/tests/`. It uses `pytest` and the FastAPI `TestClient`.
+
+### Run all agent tests
+
+```bash
+cd src/agents/performance_analytics
+uv run pytest tests
+```
+
+### Run with verbose output
+
+```bash
+cd src/agents/performance_analytics
+uv run pytest tests -v
+```
+
+Expected (latest run):
+
+```
+23 passed, 1 warning in ~3s
+```
+
+### Run a specific test class
+
+```bash
+cd src/agents/performance_analytics
+uv run pytest tests/test_performance_analytics.py::TestIngestion -q
+```
+
+### Use the Makefile
+
+```bash
+cd src/agents/performance_analytics
+make test      # uv run pytest -q
+make lint      # uv run ruff check --fix app tests
+make fmt       # uv run ruff format app tests
+```
+
+### What the Agent Tests Cover
+
+`tests/test_performance_analytics.py` is organized into classes that map to the PAS phases:
+
+| Class | Scope | Count |
+|-------|-------|-------|
+| `TestIngestion` | Touch/outcome/cost/finance ingestion, duplicate detection, API-key auth | 4 |
+| `TestRLS` | Row-level security tenant/team/rep filters | 3 |
+| `TestSemantic` | Governed metric definitions, versioned metric publication, superseding, history, lineage, explore, lifecycle | 4 |
+| `TestKpi` | Governed metric query, conversion rates, channel/rep dimensions, period filters, numerator/denominator | 4 |
+| `TestFunnel` | Pipeline funnel with stage counts and drop-off | 1 |
+| `TestCohorts` | Cohort conversion analysis by acquisition month | 1 |
+| `TestScorecards` | Rep scorecards with `as_of_date` and leaderboard ranking | 2 |
+| `TestAttribution` | Multi-touch attribution credits (sum to one), ranked summary, period filtering, attribution by entity, CSV/PDF export | 5 |
+| `TestChannelEffectiveness` | Channel metrics, conversion contribution, recommendations | 2 |
+| `TestReconciliation` | Finance source-of-truth reconciliation pass/fail | 2 |
+| `TestAlerts` | Threshold-based conversion alert | 1 |
+| `TestReports` | Scheduled reports, metric/funnel/channel-effectiveness export, CSV and PDF | 4 |
+| `TestABUplift` | Treatment vs control conversion lift with p-value | 1 |
+
+Total: **34 tests** covering P0–P3 of the PAS plus CEAAPSS-562 (ROI Attribution) and CEAAPSS-563 (Channel Effectiveness).
+
+### Manual API Smoke Tests
+
+Start the agent:
+
+```bash
+cd src/agents/performance_analytics
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8007 --reload
+```
+
+Ingest a touch and an outcome:
+
+```bash
+curl -H "X-API-Key: change-me-dev-key" \
+  -H "Content-Type: application/json" \
+  -X POST http://127.0.0.1:8007/api/v1/ingest/touch \
+  -d '{
+    "touch_id": "t-1",
+    "contact_pid": "c-1",
+    "deal_id": "d-1",
+    "rep_id": "r-1",
+    "team_id": "team-a",
+    "channel": "email",
+    "sent_at": "2026-06-01T12:00:00+00:00"
+  }'
+
+curl -H "X-API-Key: change-me-dev-key" \
+  -H "Content-Type: application/json" \
+  -X POST http://127.0.0.1:8007/api/v1/ingest/outcome \
+  -d '{
+    "outcome_id": "o-1",
+    "contact_pid": "c-1",
+    "deal_id": "d-1",
+    "stage": "funded",
+    "amount": 300000,
+    "event_type": "loan.funded",
+    "occurred_at": "2026-06-15T12:00:00+00:00"
+  }'
+```
+
+Query a KPI:
+
+```bash
+curl -X GET "http://127.0.0.1:8007/api/v1/kpi/deal_count"
+```
+
+OpenAPI docs are available at `http://127.0.0.1:8007/docs`.
+
+### Expected Results
+
+| Command | Expected Result |
+|---------|----------------|
+| `uv run pytest tests` in agent dir | `34 passed, 1 warning` |
+| `uv run pytest tests -v` in agent dir | `34 passed` with per-test names |
+| `PYTHONPATH=. pytest tests` from repo root | `2 passed` |
+| `uv run ruff check app tests` | no errors |
+| `uv run ruff format app tests` | formats in place |
+
+## 8. CI Notes
 
 A minimal CI job should:
 
 1. Install dependencies (`uv sync` or `pip install -r requirements.txt`).
 2. Run `ruff check app tests` in `src/agents/feedback_loop`.
 3. Run `pytest tests` in `src/agents/feedback_loop`.
-4. Run `pytest tests` from the repo root.
+4. Run `ruff check app tests` in `src/agents/performance_analytics`.
+5. Run `pytest tests` in `src/agents/performance_analytics`.
+6. Run `pytest tests` from the repo root.
 
 Because the `feedback_loop` engine uses `scikit-learn`, the first import is relatively slow; allow extra time for cold-start test runs.

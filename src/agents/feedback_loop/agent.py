@@ -10,6 +10,6 @@ _package_dir = str(Path(__file__).parent)
 if _package_dir not in sys.path:
     sys.path.insert(0, _package_dir)
 
-from app.agent import FeedbackLoopAgent
+from app.agent import FeedbackLoopAgent  # noqa: E402
 
 __all__ = ["FeedbackLoopAgent"]
