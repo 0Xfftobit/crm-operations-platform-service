@@ -1,8 +1,15 @@
-"""feedback_loop agent — SCAFFOLD (no source engine yet). Outcome feedback + retraining (scaffold).
+"""Feedback Loop System — top-level agent re-export.
 
-Implement the engine here or drop a source repo in, then add it to
-docker-compose.yml + src/api/main.py AGENTS."""
+The engine implementation lives in ``app/``. This module re-exports the public
+agent so the package layout also matches the codebase-structure guide.
+"""
+import sys
+from pathlib import Path
 
+_package_dir = str(Path(__file__).parent)
+if _package_dir not in sys.path:
+    sys.path.insert(0, _package_dir)
 
-def run(*args, **kwargs):
-    raise NotImplementedError("feedback_loop not implemented yet")
+from app.agent import FeedbackLoopAgent
+
+__all__ = ["FeedbackLoopAgent"]

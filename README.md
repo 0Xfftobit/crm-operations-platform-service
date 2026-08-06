@@ -7,7 +7,7 @@ groups 5 sub-agents; each keeps its original engine intact under `src/agents/<na
 its own service, fronted by a thin API gateway (`src/api/main.py`) that routes to each.
 
 ## Sub-agents
-- **feedback_loop** ← `(scaffold — no source engine yet)` — Outcome feedback + retraining (scaffold).
+- **feedback_loop** ✅ — Initial implementation ready. Captures predictions, outcomes, overrides, and explicit feedback; builds point-in-time labels; monitors drift and performance; and orchestrates reproducible retraining with fairness-gated promotion and A/B testing (P0–P3 of the FLS ticket + CEAAPSS-559/560). See `src/agents/feedback_loop/README.md` for details.
 - **performance_analytics** ← `(scaffold — no source engine yet)` — KPI dashboards + anomaly detection (scaffold).
 - **compliance_monitor** ← `Compliance-Monitoring` — Audit/governance + fair-lending.
 - **task_automation** ← `Task-Automation` — Workflow automation engine.

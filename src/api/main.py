@@ -12,7 +12,8 @@ from fastapi import FastAPI, Request, Response
 AGENTS = {
     "compliance_monitor": "compliance-monitor",
     "task_automation": "task-automation",
-    "follow_up_sequences": "follow-up-sequences"
+    "follow_up_sequences": "follow-up-sequences",
+    "feedback_loop": "feedback-loop",
 }
 
 

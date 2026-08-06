@@ -18,12 +18,14 @@ services:
       COMPLIANCE_MONITOR_URL: http://compliance_monitor:8000
       TASK_AUTOMATION_URL: http://task_automation:8000
       FOLLOW_UP_SEQUENCES_URL: http://follow_up_sequences:8000
+      FEEDBACK_LOOP_URL: http://feedback_loop:8000
     ports:
       - "${GATEWAY_PORT:-8080}:8080"
     depends_on:
       - compliance_monitor
       - task_automation
       - follow_up_sequences
+      - feedback_loop
     restart: unless-stopped
 
   compliance_monitor:
@@ -44,4 +46,10 @@ services:
     expose: ["8000"]
     restart: unless-stopped
 
-  # scaffold agents (no source engine yet): feedback_loop, performance_analytics — add services once implemented.
+  feedback_loop:
+    build: { context: ./src/agents/feedback_loop }
+    environment: *agent-env
+    expose: ["8000"]
+    restart: unless-stopped
+
+  # scaffold agents (no source engine yet): performance_analytics — add service once implemented.
