@@ -1,0 +1,75 @@
+"""Consent hot-cache for the pre-send hook (design §9 — 'consent cached with short TTL').
+
+The pre-send path must be fast and safe: it reads consent from a short-TTL cache backed by the
+repository. ``CACHE_GATEWAY=redis`` shares the cache across replicas with native TTL; otherwise an
+in-process TTL dict is used. Redis is lazily imported and degrades to memory if unavailable — a
+cache miss simply falls through to the durable repository, so correctness never needs the cache.
+"""
+import json
+import time
+
+from app.core.config import get_settings
+from app.domain.models import Consent
+
+_mem: dict[str, tuple[float, str]] = {}   # key → (expires_at, json)
+_redis = None
+_redis_url: str | None = None
+
+
+def _key(lead_id: str, channel: str) -> str:
+    return f"consent:{lead_id}:{channel}"
+
+
+def _client():
+    """Return a Redis client or None (memory fallback)."""
+    global _redis, _redis_url
+    settings = get_settings()
+    if not settings.uses_cache:
+        return None
+    if _redis is None or _redis_url != settings.redis_url:
+        try:
+            import redis
+            _redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+            _redis.ping()
+            _redis_url = settings.redis_url
+        except Exception:  # noqa: BLE001 — broker/lib unavailable → memory fallback
+            _redis = None
+    return _redis
+
+
+def get(lead_id: str, channel: str) -> Consent | None:
+    key = _key(lead_id, channel)
+    client = _client()
+    if client is not None:
+        raw = client.get(key)
+        return Consent(**json.loads(raw)) if raw else None
+    hit = _mem.get(key)
+    if hit and hit[0] > time.time():
+        return Consent(**json.loads(hit[1]))
+    _mem.pop(key, None)
+    return None
+
+
+def set(consent: Consent) -> None:  # noqa: A001 — cache verb, not the builtin
+    key = _key(consent.lead_id, consent.channel)
+    raw = json.dumps(consent.model_dump(mode="json"))
+    ttl = get_settings().consent_cache_ttl_s
+    client = _client()
+    if client is not None:
+        client.set(key, raw, ex=ttl)
+    else:
+        _mem[key] = (time.time() + ttl, raw)
+
+
+def invalidate(lead_id: str, channel: str) -> None:
+    key = _key(lead_id, channel)
+    client = _client()
+    if client is not None:
+        client.delete(key)
+    _mem.pop(key, None)
+
+
+def reset() -> None:
+    global _redis, _redis_url
+    _mem.clear()
+    _redis, _redis_url = None, None

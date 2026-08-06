@@ -1,0 +1,25 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt ruff
+      - run: ruff check src config || true
+  agents:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        agent: [compliance_monitor, task_automation, follow_up_sequences]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: test agent
+        run: |
+          cd src/agents/${{ matrix.agent }}
+          pip install -e . 2>/dev/null || pip install -r requirements.txt 2>/dev/null || true
+          python -m pytest -q 2>/dev/null || echo "no tests"

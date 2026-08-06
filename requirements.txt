@@ -1,0 +1,8 @@
+# Gateway-only deps. Each agent under src/agents/<name>/ carries its OWN
+# requirements/pyproject (installed in that agent's own image) to avoid cross-engine
+# dependency conflicts.
+fastapi>=0.115
+uvicorn[standard]>=0.32
+httpx>=0.28
+pydantic-settings>=2.6
+structlog>=24.4

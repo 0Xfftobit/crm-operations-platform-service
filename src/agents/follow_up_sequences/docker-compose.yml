@@ -1,0 +1,63 @@
+# Local dev stack: the engine + a Postgres for durable state + a Redis hot cache.
+# Usage: docker compose up --build   (API on http://localhost:8008, db on localhost:5440)
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: followup_sequence_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-followup_sequence}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5440:5432"          # 5440 host-side to avoid colliding with other local Postgres
+    volumes:
+      - followup_sequence_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-followup_sequence}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: followup_sequence_redis
+    restart: unless-stopped
+    ports:
+      - "6387:6379"          # 6387 host-side to avoid colliding with other local Redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    container_name: followup_sequence_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENV: local
+      PORT: "3000"
+      WEB_CONCURRENCY: "2"
+      LOG_LEVEL: INFO
+      STORAGE_GATEWAY: postgres
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-followup_sequence}
+      CACHE_GATEWAY: redis
+      REDIS_URL: redis://redis:6379/0
+      API_KEY: ${API_KEY:-change-me-dev-key}
+    ports:
+      - "8008:3000"          # host 8008 -> container 3000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/api/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  followup_sequence_db_data:

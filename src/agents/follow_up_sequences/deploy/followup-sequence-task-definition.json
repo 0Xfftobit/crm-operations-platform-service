@@ -1,0 +1,71 @@
+{
+  "family": "crequity-followup-sequence",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::537124939480:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::537124939480:role/ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "crequity-followup-sequence",
+      "image": "537124939480.dkr.ecr.us-east-2.amazonaws.com/crequity-followup-sequence:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "name": "http",
+          "containerPort": 3000,
+          "hostPort": 3000,
+          "protocol": "tcp",
+          "appProtocol": "http"
+        }
+      ],
+      "environment": [
+        { "name": "ENV", "value": "production" },
+        { "name": "PORT", "value": "3000" },
+        { "name": "WEB_CONCURRENCY", "value": "2" },
+        { "name": "LOG_LEVEL", "value": "INFO" },
+        { "name": "LOG_JSON", "value": "true" },
+        { "name": "STORAGE_GATEWAY", "value": "postgres" },
+        { "name": "EVENT_SOURCE_GATEWAY", "value": "kafka" }
+      ],
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:537124939480:secret:crequity-followup-sequence:DATABASE_URL::"
+        },
+        {
+          "name": "API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:537124939480:secret:crequity-followup-sequence:API_KEY::"
+        },
+        {
+          "name": "SEQUENCE_SOURCE_URL",
+          "valueFrom": "arn:aws:secretsmanager:us-east-2:537124939480:secret:crequity-followup-sequence:SEQUENCE_SOURCE_URL::"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/api/v1/health')\" || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 15
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/crequity-followup-sequence",
+          "awslogs-region": "us-east-2",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}

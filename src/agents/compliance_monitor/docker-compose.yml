@@ -1,0 +1,96 @@
+# Local dev stack: the engine + Postgres (durable state) + Redis (hot cache) + Redpanda
+# (Kafka-API bus for streaming ingest + produced compliance events).
+# Usage: docker compose up --build   (API on http://localhost:8004, db on localhost:5436)
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: compliance_monitoring_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-compliance_monitoring}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5436:5432"          # 5436 host-side to avoid colliding with other local Postgres
+    volumes:
+      - compliance_monitoring_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-compliance_monitoring}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: compliance_monitoring_redis
+    restart: unless-stopped
+    ports:
+      - "6383:6379"          # 6383 host-side to avoid colliding with other local Redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    container_name: compliance_monitoring_kafka
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    container_name: compliance_monitoring_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    environment:
+      ENV: local
+      PORT: "3000"
+      WEB_CONCURRENCY: "2"
+      LOG_LEVEL: INFO
+      STORAGE_GATEWAY: postgres
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-compliance_monitoring}
+      DB_AUTO_CREATE: "true"
+      CACHE_GATEWAY: redis
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      KAFKA_PRODUCE: "true"
+      KAFKA_INGEST: "true"
+      WORM_GATEWAY: local
+      WORM_LOCAL_DIR: /data/worm
+      MERKLE_ANCHOR_INTERVAL_MIN: "60"
+      API_KEY: ${API_KEY:-change-me-dev-key}
+    volumes:
+      - compliance_monitoring_worm:/data/worm
+    ports:
+      - "8004:3000"          # host 8004 -> container 3000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/api/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  compliance_monitoring_db_data:
+  compliance_monitoring_worm:

@@ -1,0 +1,73 @@
+# Local dev: docker compose up --build   → http://localhost:8011
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: task_automation_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: taskauto
+      POSTGRES_PASSWORD: taskauto
+      POSTGRES_DB: task_automation
+    ports:
+      - "5433:5432"
+    volumes:
+      - task_automation_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskauto -d task_automation"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: task_automation_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    container_name: task_automation_app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ENV: local
+      PORT: "3000"
+      WEB_CONCURRENCY: "2"
+      LOG_LEVEL: INFO
+      API_KEY: ${API_KEY:-change-me-dev-key}
+      TASK_AUTOMATION_ENGINE_VERSION: rules-engine-1.0
+      STORAGE_BACKEND: postgres
+      DATABASE_URL: postgresql://taskauto:taskauto@postgres:5432/task_automation
+      IDEMPOTENCY_BACKEND: redis
+      REDIS_URL: redis://redis:6379/0
+      SCHEDULER_ENABLED: "true"
+      BUSINESS_TIMEZONE: America/Chicago
+      BUSINESS_START_HOUR: "9"
+      BUSINESS_END_HOUR: "17"
+      DUPLICATE_TASK_WINDOW_HOURS: "4"
+      STAGE_TRACKING_URL: ${STAGE_TRACKING_URL:-http://host.docker.internal:8009}
+      SCHEDULER_INTERVAL_S: "60"
+    volumes:
+      - task_automation_data:/app/data
+    ports:
+      - "8011:3000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/api/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  task_automation_data:
+  task_automation_pg:
