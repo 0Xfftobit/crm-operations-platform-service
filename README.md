@@ -9,9 +9,9 @@ its own service, fronted by a thin API gateway (`src/api/main.py`) that routes t
 ## Sub-agents
 - **feedback_loop** ✅ — Initial implementation ready. Captures predictions, outcomes, overrides, and explicit feedback; builds point-in-time labels; monitors drift and performance; and orchestrates reproducible retraining with fairness-gated promotion and A/B testing (P0–P3 of the FLS ticket + CEAAPSS-559/560). See `src/agents/feedback_loop/README.md` for details.
 - **performance_analytics** ✅ — Initial implementation ready. Governed KPIs, multi-touch attribution, pipeline funnels, rep/team scorecards, channel effectiveness, finance reconciliation, anomaly/threshold alerts, and scheduled CSV/PDF reports (P0–P3 of the PAS ticket). See `src/agents/performance_analytics/README.md` for details.
-- **compliance_monitor** ← `Compliance-Monitoring` — Audit/governance + fair-lending.
-- **task_automation** ← `Task-Automation` — Workflow automation engine.
-- **follow_up_sequences** ← `Followup-Sequence` — Cadence / drip sequences.
+- **compliance_monitor** ✅ — Initial implementation ready. Audit/governance + fair-lending: pre-send compliance hook, consent/DNC/quiet-hours, CAN-SPAM, immutable hash-chained audit, fairness/disparity, ECOA disclosure clocks, PII/retention, rule versioning. See `docs/implementation_status_cms.md` and `src/agents/compliance_monitor/README.md`.
+- **task_automation** ✅ — Initial implementation ready. Workflow automation engine: JSONLogic/CEL rule engine, stage-driven task creation, document requests, business-hours SLA, idempotency, dry-run/canary/rollback, LLM guardrails. See `docs/implementation_status_tas.md` and `src/agents/task_automation/README.md`.
+- **follow_up_sequences** ✅ — Initial implementation ready. Cadence / drip sequences: sequence builder, enrollment/dedup, quiet-hours/frequency guardrails, engagement-driven branching, stop conditions, personalization, analytics. See `docs/implementation_status_fus.md` and `src/agents/follow_up_sequences/README.md`.
 
 ## Architecture
 - `src/agents/<name>/` — the original engine, copied verbatim (its own app/, deps, Dockerfile).

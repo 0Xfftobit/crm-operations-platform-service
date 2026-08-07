@@ -118,9 +118,9 @@ def drift_evaluate(
     reference = get_reference(engine_name, feature)
     psi_value = psi(reference, current_values) if reference else 0.0
     over_threshold = psi_value > settings.psi_threshold
-    consecutive = _consecutive_alerts(engine_name, feature) if over_threshold else 0
-    # A sustained alert requires the threshold breach plus prior consecutive breaches.
-    alert = over_threshold and (consecutive + 1) >= settings.drift_persistence_evals
+    # `alert` marks a threshold breach for this record. Sustained retrain
+    # triggering is handled by `should_trigger_retrain` using consecutive alerts.
+    alert = over_threshold
 
     record = DriftRecord(
         engine_name=engine_name,
@@ -153,10 +153,13 @@ def should_trigger_retrain(engine_name: str, settings: Any | None = None) -> tup
         settings = get_settings()
 
     triggered: list[str] = []
+    seen: set[str] = set()
+    # Sustained drift is declared when any feature has `drift_persistence_evals` consecutive alerts.
     for record in get_drift_repository().list(engine_name=engine_name):
-        if record.alert:
+        if record.alert and record.feature not in seen:
             consecutive = _consecutive_alerts(engine_name, record.feature)
             # Current record is already included as the latest alert, so consecutive >= persistence.
             if consecutive >= settings.drift_persistence_evals:
                 triggered.append(record.feature)
+                seen.add(record.feature)
     return bool(triggered), triggered
