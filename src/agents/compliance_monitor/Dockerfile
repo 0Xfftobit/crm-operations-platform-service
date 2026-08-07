@@ -18,6 +18,7 @@ RUN uv sync --frozen --no-dev --no-install-project --extra redis --extra kafka -
 
 # 2) the app + install the project
 COPY app ./app
+COPY README.md ./
 RUN uv sync --frozen --no-dev --extra redis --extra kafka --extra otel
 
 
