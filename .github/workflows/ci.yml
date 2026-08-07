@@ -13,13 +13,17 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        agent: [compliance_monitor, task_automation, follow_up_sequences]
+        agent: [compliance_monitor, feedback_loop, follow_up_sequences, performance_analytics, task_automation]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          version: '0.11.x'
+          enable-cache: true
       - name: test agent
         run: |
           cd src/agents/${{ matrix.agent }}
-          pip install -e . 2>/dev/null || pip install -r requirements.txt 2>/dev/null || true
-          python -m pytest -q 2>/dev/null || echo "no tests"
+          uv sync
+          uv run pytest -q
