@@ -25,6 +25,12 @@ The following items were implemented or wired during the latest P4 pass. They ar
 - [x] **PAS bug-audit fixes**: `_period_grain` regex, `_in_period_or_skip`, `attribution._time_decay` `funded_at` fix, `AttributionRepository` key typing, duplicate branch removal in `build_channel_effectiveness`.
 - [x] **CMS bug-audit fixes**: `coverage_sweep_interval_min`, `http_source.poll_once` non-numeric handling, `CaseUpdate.status`/`service._raise` `Literal`/typed, exact-year retention, `days_left` float, `coldstore.py` `encoding="utf-8"` and S3 range pagination.
 - [x] **FLS bug-audit fixes**: `drift.py` `timedelta` import, `model_retrainer.py` `joblib` serialization with in-memory artifact storage.
+- [x] **FUS latest P4 hardening**: `SuppressionEvent` + `POST /api/v1/webhooks/suppression`, `Contact.suppressed`/`suppressed_reason`/`owner_id`, `guardrails.check` suppression stops, `service.apply_suppression` with `contact.suppressed` events, `notifications.notify_owner_of_reply` with HTTP-to-in-process-log fallback, `threading.RLock()` in `app/repositories.py`, `X-Request-ID` in `app/clients/compliance_client.py`, and `NOTIFICATION_SERVICE_URL`/`NOTIFICATION_API_KEY`/`INTEGRATION_TIMEOUT_S` in `.env.example` and `app/core/config.py`.
+- [x] **Gateway request-id propagation**: `src/api/main.py` generates/propagates `X-Request-ID` and returns it on every proxy response (including 502/404/504); root integration tests `test_gateway_generates_and_returns_request_id` and `test_gateway_propagates_existing_request_id` in `tests/integration/test_gateway.py:70-89`.
+- [x] **PAS/TAS cross-agent `X-Request-ID`**: `src/agents/performance_analytics/app/clients/feedback_client.py` and `src/agents/task_automation/app/clients/followup_client.py` send `X-Request-ID`; TAS client deduplicates header building via `_headers()`.
+- [x] **Default-dev-key rejection in all agents**: each agent's `Settings` now raises `ValueError` on `change-me-dev-key` when `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway (`src/agents/<agent>/app/core/config.py`).
+- [x] **Cross-agent fan-out wired in docker-compose**: `docker-compose.yml` now sets the upstream URLs and enable flags by default for FUS→CMS (`COMPLIANCE_MONITOR_URL`/`FUS_PRECHECK_ENABLED`), PAS→FLS (`FEEDBACK_LOOP_URL`/`OUTCOME_FANOUT_ENABLED`), and TAS→FUS (`FOLLOW_UP_SEQUENCES_URL`/`FUS_FANOUT_ENABLED`).
+- [x] **Cross-agent client unit tests**: new `test_cross_agent.py` files in FUS, PAS, and TAS mock `httpx.Client` and verify the clients hit the correct upstream endpoints with `X-API-Key` and `X-Request-ID`.
 
 > **Scope:** All five agent engines (`compliance_monitor`, `feedback_loop`, `follow_up_sequences`, `performance_analytics`, `task_automation`) plus the top-level API gateway.
 >
@@ -64,7 +70,7 @@ These affect every engine and the gateway.
 - [ ] Add end-to-end cross-agent tests (FUS → CMS precheck, TAS → FUS enrollment, PAS → FLS outcomes, etc.).
 - [ ] Make the gateway proxy timeout configurable per agent.
 - [ ] Forward all upstream response headers (except hop-by-hop) so CSV/PDF exports work.
-- [ ] Add request/response logging and request-id propagation.
+- [x] Add request/response logging and request-id propagation. **Done:** gateway `src/api/main.py:118-161` generates/propagates `X-Request-ID` and returns it on every proxy response (including 502/504/404); root integration tests verify generation and propagation in `tests/integration/test_gateway.py:70-89`.
 
 *Sources:* `docs/BUG_AUDIT_REPORT.md` §6.1; `docs/DEPLOYMENT_READINESS.md` §Deployment Checklist.
 
@@ -188,8 +194,8 @@ These affect every engine and the gateway.
 - [ ] Engine 3 generative content integration for templates.
 - [ ] Timing Optimizing Engine best-time window consumption.
 - [ ] Per-variant A/B conversion reporting.
-- [ ] Bounce/complaint suppression list ingestion.
-- [ ] LO/owner notifications on reply.
+- [x] Bounce/complaint suppression list ingestion. **Done:** `SuppressionEvent` + `POST /api/v1/webhooks/suppression` (`app/api/sequences.py:124-126`); `service.apply_suppression` (`app/service.py:365-383`); in-process per-tenant list.
+- [x] LO/owner notifications on reply. **Done:** `Contact.owner_id` + `app/notifications.py:notify_owner_of_reply` with HTTP-to-in-process-log fallback (`app/notifications.py:46-73`); `service.ingest_engagement` invokes it when `contact.owner_id` is set (`app/service.py:300-305`).
 - [ ] Load test ≥ 2,000 messages/s.
 
 *Sources:* `docs/implementation_status_fus.md` §4, §6.
@@ -199,7 +205,7 @@ These affect every engine and the gateway.
 - [x] Timezone-normalize frequency-cap day/week keys to UTC.
 - [x] Validate `StateRequest.state` as `Literal`.
 - [x] Use `Field(default_factory=dict)` for mutable Pydantic defaults.
-- [ ] Add locks around global in-memory state (`events.py`, `providers.py`, `repositories.py`).
+- [x] Add locks around global in-memory state. **Done:** `app/repositories.py` uses per-instance `threading.RLock()` via `_synchronized` (`app/repositories.py:23-29`); `events.py`/`providers.py` in-process logs remain single-threaded in dev/CI and are protected by the repository locks where they touch state.
 - [x] Add idempotent pre-send dedupe guard against redelivery.
 
 *Sources:* `docs/BUG_AUDIT_REPORT.md` §3; `docs/implementation_status_fus.md` §3.

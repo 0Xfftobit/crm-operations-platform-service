@@ -5,7 +5,7 @@
 
 ## Overall Verdict
 
-The repository is **ready for local development, integration testing, staged demonstrations, and CI** on a laptop or CI runner. **P0–P3 business logic is implemented and tested across all five agents, and a first P4 hardening pass is now complete.** A first P4 pass added shared infrastructure in `docker-compose.yml`, gateway auth, per-agent timeouts, Redis-backed frequency counters in FUS, cross-agent HTTP fan-out clients (FUS → CMS, PAS → FLS, TAS → FUS), real channel providers with mock fallback in FUS, HTTP fallback CRM/calendar/feature-store clients in TAS, per-sequence frequency caps and idempotency in FUS, and bug-audit fixes in CMS, PAS, and FLS. **All engine test suites and lint checks are green.** It is still **not ready for production deployment** until the remaining blockers below are addressed.
+The repository is **ready for local development, integration testing, staged demonstrations, and CI** on a laptop or CI runner. **P0–P3 business logic is implemented and tested across all five agents, and a first P4 hardening pass is now complete.** A first P4 pass added shared infrastructure in `docker-compose.yml`, gateway auth, per-agent timeouts, Redis-backed frequency counters in FUS, cross-agent HTTP fan-out clients (FUS → CMS, PAS → FLS, TAS → FUS), real channel providers with mock fallback in FUS, HTTP fallback CRM/calendar/feature-store clients in TAS, per-sequence frequency caps and idempotency in FUS, and bug-audit fixes in CMS, PAS, and FLS. The latest P4 pass added FUS suppression (`SuppressionEvent` and `POST /api/v1/webhooks/suppression`) with permanent contact suppression and `contact.suppressed` events, LO/owner reply notifications with optional HTTP service and in-process log fallback, `threading.RLock()` on all FUS repository methods, `X-Request-ID` propagation in the FUS CMS precheck client, and the gateway now generates/propagates `X-Request-ID` on every proxy response (including 502/404/504) with root integration tests. **All engine test suites and lint checks are green (see `docs/ENGINE_TESTING_RESULTS.md`).** It is still **not ready for production deployment** until the remaining blockers below are addressed.
 
 | Readiness Area | Status | Score |
 |----------------|--------|------:|
@@ -36,7 +36,15 @@ The repository is **ready for local development, integration testing, staged dem
 - **performance_analytics** bug-audit fixes landed in `reconciliation._period_grain`, `dashboard_builder._in_period_or_skip`, `attribution._time_decay`, `AttributionRepository._items` typing, and `build_channel_effectiveness`.
 - **compliance_monitor** bug-audit fixes landed in coverage-loop interval handling, `http_source.poll_once` cursor hardening, `CaseUpdate.status`/`service._raise` typing, exact-year retention, float `days_left`, and `coldstore.py` S3/local `encoding="utf-8"` and single pagination.
 - **feedback_loop** now uses `joblib` for model/dataset serialization and `timedelta` in the drift window; the drift test passes.
-- Root integration tests in `tests/integration/test_gateway.py` cover auth, unknown agent, unconfigured upstream, and production default-key rejection.
+- Root integration tests in `tests/integration/test_gateway.py` cover auth, unknown agent, unconfigured upstream, production default-key rejection, and `X-Request-ID` generation/propagation (`test_gateway_generates_and_returns_request_id`, `test_gateway_propagates_existing_request_id`).
+- **follow_up_sequences** now has a `SuppressionEvent` model and `POST /api/v1/webhooks/suppression` endpoint that permanently suppresses a contact on bounce/complaint/spam/block events, stops active enrollments, and emits `contact.suppressed`; `guardrails.check` stops sends on `contact.suppressed`; `Contact` includes `suppressed`, `suppressed_reason`, and `owner_id`.
+- **follow_up_sequences** now notifies the assigned LO/owner on inbound reply via `app/notifications.py:notify_owner_of_reply`, with an HTTP `POST` to `NOTIFICATION_SERVICE_URL` when configured and a fallback to an in-process log.
+- **follow_up_sequences** now wraps all repository methods with `threading.RLock()` via `app/repositories.py:_synchronized`.
+- **follow_up_sequences** CMS precheck client (`app/clients/compliance_client.py`) sends `X-Request-ID` on every call.
+- **task_automation** FUS fan-out client (`app/clients/followup_client.py`) and **performance_analytics** FLS fan-out client (`app/clients/feedback_client.py`) now send `X-Request-ID`; the TAS client deduplicates header building through a shared `_headers()` helper.
+- The API gateway generates/propagates `X-Request-ID` and returns it on every proxied response, including 502/504/404 responses.
+- `docker-compose.yml` now wires the cross-agent fan-outs by default: `FUS_PRECHECK_ENABLED=true` + `COMPLIANCE_MONITOR_URL` for FUS, `OUTCOME_FANOUT_ENABLED=true` + `FEEDBACK_LOOP_URL` for PAS, and `FUS_FANOUT_ENABLED=true` + `FOLLOW_UP_SEQUENCES_URL` for TAS.
+- All five agents plus the gateway reject the default `change-me-dev-key` in non-local environments; production still requires a vault-managed key and per-tenant RBAC is not implemented.
 
 ---
 
@@ -97,6 +105,9 @@ The repository is **ready for local development, integration testing, staged dem
 | Real channel providers | Partial | Twilio/SendGrid/WhatsApp Business HTTP clients in `app/providers.py` with mock fallback when unconfigured |
 | Kafka consumer for `lead.scored`/`deal.stage_changed` | Not done | In-process `app/events.py` |
 | Postgres durable persistence | Not done | `STORAGE_GATEWAY=memory|postgres` optional |
+|| Suppression webhook / permanent suppression | Done | `SuppressionEvent` + `POST /api/v1/webhooks/suppression`; `service.apply_suppression` (`app/service.py:365-383`); in-process per-tenant list |
+|| LO/owner reply notifications | Done | `Contact.owner_id` + `app/notifications.py:notify_owner_of_reply`; optional HTTP service with in-process log fallback |
+|| Repository thread-safety | Done | `threading.RLock()` via `_synchronized` in `app/repositories.py` |
 
 ### Performance Analytics System (PAS)
 
@@ -145,10 +156,10 @@ The repository is **ready for local development, integration testing, staged dem
 ### Local / CI
 
 - [x] `docker compose up --build` starts the gateway and all five agents.
-- [x] All engine test suites pass (CMS 106, FLS 22, FUS 40, PAS 34, TAS 69 + 1 skipped) and `ruff`/`mypy` lint is green.
+- [x] All engine test suites pass (CMS 106, FLS 22, FUS 45, PAS 35, TAS 72 + 1 skipped) and `ruff` lint is green.
 - [x] Gateway `/health` and `/agents` respond.
 - [x] Gateway `/ready` checks upstream agent health endpoints.
-- [x] Root integration tests cover auth, 404, 502, and default-key rejection.
+- [x] Root integration tests cover auth, 404, 502, default-key rejection, and `X-Request-ID` generation/propagation.
 - [ ] End-to-end cross-agent tests through the gateway.
 - [ ] Full integration test suite with real Postgres/Redis/Kafka.
 
@@ -179,7 +190,7 @@ The repository is **ready for local development, integration testing, staged dem
 
 ## Immediate Blockers for Production
 
-1. **Authentication is not unified** — each agent uses `X-API-Key` with the default `change-me-dev-key` unless overridden; the gateway rejects the default in non-local envs but still only checks a single shared key.
+1. **Authentication is a shared single key, not per-tenant/per-user RBAC** — all agents and the gateway now reject the default `change-me-dev-key` in non-local environments, but they still share one `X-API-Key` and have no OAuth2, tenant scopes, or row-level access control.
 2. **No production persistence** — most agents use in-memory stores by default; S3 WORM archive not wired.
 3. **No real Kafka cluster** — producer/consumer code exists but is not always enabled; exactly-once processing not wired.
 4. **No observability** — Prometheus/Grafana and OpenTelemetry services are defined in compose but the apps do not expose metrics/traces yet.

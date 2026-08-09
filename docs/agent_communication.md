@@ -91,7 +91,11 @@ gateway (port 8080)
 └── performance_analytics:8000
 ```
 
-Each agent is independently deployable. The gateway gives clients a single entry point, and `*_URL` environment variables make the mesh configurable.
+Each agent is independently deployable. The gateway gives clients a single entry point, and `*_URL` environment variables make the mesh configurable. The default compose also enables the cross-agent HTTP fan-outs:
+
+- `FUS_PRECHECK_ENABLED=true` + `COMPLIANCE_MONITOR_URL=http://compliance_monitor:8000`
+- `OUTCOME_FANOUT_ENABLED=true` + `FEEDBACK_LOOP_URL=http://feedback_loop:8000`
+- `FUS_FANOUT_ENABLED=true` + `FOLLOW_UP_SEQUENCES_URL=http://follow_up_sequences:8000`
 
 ## 7. Verification
 

@@ -118,12 +118,16 @@ This P4 pass added the following production hardening pieces without breaking P0
 
 1. **Cross-agent FUS fan-out**: `app/clients/followup_client.py` provides a synchronous `httpx` client that fans `deal.stage_changed` and `lead.assigned` events to the Follow-up Sequences `POST /api/v1/stage-changed` and `POST /api/v1/triggers/lead-scored` endpoints when `FUS_FANOUT_ENABLED=true` and `FOLLOW_UP_SEQUENCES_URL` is configured.
 2. **Environment variables**: `FOLLOW_UP_SEQUENCES_URL`, `FOLLOW_UP_SEQUENCES_API_KEY`, and `FUS_FANOUT_ENABLED` added to `.env.example` and `app/core/config.py`.
+3. **Request-id propagation in cross-agent calls**: `app/clients/followup_client.py` now sends an `X-Request-ID` header on every FUS fan-out request and deduplicates header construction through a shared `_headers()` helper (`app/clients/followup_client.py:23-28`).
 
 This P4 pass also wired real HTTP clients for CRM, calendar, and feature-store integrations:
 
-3. **CRM/calendar/feature-store HTTP clients**: `app/integrations/crm.py`, `app/integrations/calendar.py`, and `app/integrations/feature_store.py` now call `CRM_SERVICE_URL`, `CALENDAR_SERVICE_URL`, and `FEATURE_STORE_URL` when configured, falling back to in-process stubs otherwise. `CRM_SERVICE_URL`/`CRM_API_KEY`, `CALENDAR_SERVICE_URL`/`CALENDAR_API_KEY`, and `FEATURE_STORE_URL`/`FEATURE_STORE_API_KEY` were added to `.env.example` and `app/core/config.py`.
-4. **Doc-request workflow fix**: `verify_documents_activity` in `app/workflows/doc_request_temporal.py:162-163` now defaults to `verified=False` when no document signals have been received.
-5. **`document_received` validation**: `POST /events/document-received` (`app/api/events.py:31-46`) resolves and validates the `workflow_id` before signaling a doc-request workflow.
+4. **CRM/calendar/feature-store HTTP clients**: `app/integrations/crm.py`, `app/integrations/calendar.py`, and `app/integrations/feature_store.py` now call `CRM_SERVICE_URL`, `CALENDAR_SERVICE_URL`, and `FEATURE_STORE_URL` when configured, falling back to in-process stubs otherwise. `CRM_SERVICE_URL`/`CRM_API_KEY`, `CALENDAR_SERVICE_URL`/`CALENDAR_API_KEY`, and `FEATURE_STORE_URL`/`FEATURE_STORE_API_KEY` were added to `.env.example` and `app/core/config.py`.
+5. **Doc-request workflow fix**: `verify_documents_activity` in `app/workflows/doc_request_temporal.py:162-163` now defaults to `verified=False` when no document signals have been received.
+6. **`document_received` validation**: `POST /events/document-received` (`app/api/events.py:31-46`) resolves and validates the `workflow_id` before signaling a doc-request workflow.
+7. **Default-dev-key rejection**: `app/core/config.py` now raises `ValueError` if `API_KEY=change-me-dev-key` and `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway.
+8. **Docker-compose cross-agent wiring**: `docker-compose.yml` sets `FOLLOW_UP_SEQUENCES_URL=http://follow_up_sequences:8000` and `FUS_FANOUT_ENABLED=true` for TAS by default.
+9. **Cross-agent client tests**: `tests/test_cross_agent.py` mocks `httpx.Client` and verifies TAS→FUS `stage_changed` and `lead_scored` fan-out call the right endpoints with `X-API-Key` and `X-Request-ID`.
 
 Items still deferred:
 - Production CRM/calendar/feature-store endpoints (Google/Outlook, enterprise CRM, Feast/Tecton).

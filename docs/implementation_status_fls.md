@@ -181,6 +181,7 @@ This P4 pass added the following bug-audit fixes to the Feedback Loop agent whil
 - **PAS → FLS outcome fan-out**: `src/agents/performance_analytics/app/clients/feedback_client.py` forwards `loan.funded` / `deal.lost` outcome events from Performance Analytics to `POST /api/v1/outcomes` when `OUTCOME_FANOUT_ENABLED=true` and `FEEDBACK_LOOP_URL` are configured in Performance Analytics.
 - **Shared infrastructure**: `docker-compose.yml` now provisions Postgres, Redis, Redpanda (Kafka), Prometheus, Grafana, Schema Registry, and an OpenTelemetry Collector. FLS can switch from in-memory to disk persistence today; Postgres/S3 and Kafka integration remain P4.
 - **Bug-audit fixes**: `app/drift.py` now imports and uses `timedelta` for exact time-window comparisons (`app/drift.py:6,86-88`); `tests/test_feedback_loop.py` drift test passes. `app/model_retrainer.py` now uses `joblib` for dataset and model serialization and stores in-memory artifacts on the repository for tests when `STORAGE_BACKEND=memory` (`app/model_retrainer.py:9,167,218,271,274`).
+- **Default-dev-key rejection**: `app/core/config.py` now raises `ValueError` if `API_KEY=change-me-dev-key` and `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway.
 
 Items still deferred:
 - Real MLflow model registry, feature store, shadow/canary serving, production scheduler, Kafka consumer, Postgres/S3 persistence, and external alerting.
