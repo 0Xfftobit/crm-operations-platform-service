@@ -8,6 +8,7 @@ from app.duration import condition_duration, parse_duration
 from app.frequency import FrequencyStore
 
 S = Settings()
+SEQ = "seq-1"
 
 
 def _contact(**kw) -> Contact:
@@ -39,25 +40,25 @@ def test_unknown_timezone_falls_back():
 
 # ── Guardrail dispositions ─────────────────────────────────────────────────
 def test_guardrail_passes_when_all_clear():
-    d = guardrails.check(_contact(), now=DAY, settings=S, freq=FrequencyStore())
+    d = guardrails.check(_contact(), sequence_id=SEQ, now=DAY, settings=S, freq=FrequencyStore())
     assert d.disposition == "send" and d.allowed
 
 
 def test_guardrail_stops_on_opt_out_and_dnc():
-    assert guardrails.check(_contact(opted_out=True), now=DAY, settings=S,
+    assert guardrails.check(_contact(opted_out=True), sequence_id=SEQ, now=DAY, settings=S,
                             freq=FrequencyStore()).disposition == "stop"
-    assert guardrails.check(_contact(dnc=True), now=DAY, settings=S,
+    assert guardrails.check(_contact(dnc=True), sequence_id=SEQ, now=DAY, settings=S,
                             freq=FrequencyStore()).reason == "dnc"
 
 
 def test_guardrail_fail_closed_on_unknown_consent():
-    d = guardrails.check(_contact(consent_basis="unknown"), now=DAY, settings=S,
+    d = guardrails.check(_contact(consent_basis="unknown"), sequence_id=SEQ, now=DAY, settings=S,
                          freq=FrequencyStore())
     assert d.disposition == "hold" and d.reason == "consent_unknown"
 
 
 def test_guardrail_holds_in_quiet_hours():
-    d = guardrails.check(_contact(), now=NIGHT, settings=S, freq=FrequencyStore())
+    d = guardrails.check(_contact(), sequence_id=SEQ, now=NIGHT, settings=S, freq=FrequencyStore())
     assert d.disposition == "hold" and d.reason == "quiet_hours"
     assert quiet_hours.is_allowed(d.retry_at, tz="America/New_York") is True
 
@@ -65,14 +66,26 @@ def test_guardrail_holds_in_quiet_hours():
 def test_guardrail_holds_on_frequency_cap():
     freq = FrequencyStore()
     for _ in range(S.freq_cap_day):
-        freq.increment("default", "c", DAY)
-    d = guardrails.check(_contact(), now=DAY, settings=S, freq=freq)
+        freq.increment("default", "c", SEQ, DAY)
+    d = guardrails.check(_contact(), sequence_id=SEQ, now=DAY, settings=S, freq=freq)
+    assert d.disposition == "hold" and d.reason == "frequency_cap"
+
+
+def test_guardrail_holds_on_per_sequence_frequency_cap():
+    freq = FrequencyStore()
+    seq_day = 1
+    for _ in range(seq_day):
+        freq.increment("default", "c", SEQ, DAY)
+    d = guardrails.check(
+        _contact(), sequence_id=SEQ, now=DAY, settings=S, freq=freq,
+        per_seq_day=seq_day, per_seq_week=10,
+    )
     assert d.disposition == "hold" and d.reason == "frequency_cap"
 
 
 def test_guardrail_manual_cooldown():
     c = _contact(last_manual_outreach_at=DAY - timedelta(hours=2))
-    d = guardrails.check(c, now=DAY, settings=S, freq=FrequencyStore())
+    d = guardrails.check(c, sequence_id=SEQ, now=DAY, settings=S, freq=FrequencyStore())
     assert d.disposition == "hold" and d.reason == "manual_cooldown"
 
 

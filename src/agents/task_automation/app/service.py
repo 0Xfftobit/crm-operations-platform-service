@@ -9,6 +9,7 @@ import structlog
 
 from app import events, store
 from app.business_hours import is_overdue
+from app.clients import followup_client
 from app.core.config import get_settings
 from app.dlq import enqueue as dlq_enqueue
 from app.dlq import get_dlq_entry, mark_replayed
@@ -300,6 +301,25 @@ def process_event(
     trigger_id = pipeline_result["trigger_id"]
     evaluation = pipeline_result["evaluation"]
     tenant_id = tenant_id or enriched.get("tenant_id")
+
+    # Cross-agent fan-out to Follow-up Sequences Engine (P4).
+    if not dry_run:
+        settings = get_settings()
+        if topic == "deal.stage_changed":
+            stage = enriched.get("to_stage") or enriched.get("stage") or payload.get("stage")
+            if isinstance(stage, str):
+                followup_client.stage_changed(
+                    lead_id, stage, tenant=tenant_id or "default", settings=settings,
+                )
+        if topic == "lead.assigned" and isinstance(enriched.get("lead_score"), (int, float)):
+            followup_client.lead_scored(
+                lead_id,
+                score=float(enriched["lead_score"]),
+                sequence_id=enriched.get("sequence_id", "default"),
+                tenant=tenant_id or "default",
+                context=enriched.get("context"),
+                settings=settings,
+            )
 
     run = create_run(
         trigger_id=trigger_id, topic=topic, lead_id=lead_id, source=source, dry_run=dry_run,

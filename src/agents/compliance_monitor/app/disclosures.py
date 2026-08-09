@@ -40,7 +40,8 @@ def status(timer: DisclosureTimer, *, settings: Settings, now: datetime) -> dict
     """Return {state, days_left, warn}: satisfied | overdue(critical) | warning | ok."""
     if timer.satisfied:
         return {"state": "satisfied", "days_left": None, "warn": False}
-    days_left = (timer.due_at - now).days
+    delta = timer.due_at - now
+    days_left = delta.total_seconds() / 86400
     if now >= timer.due_at:
         return {"state": "overdue", "days_left": days_left, "warn": True}   # → critical
     offsets = sorted((int(o) for o in settings.disclosure_warn_offsets), reverse=True)

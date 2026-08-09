@@ -75,8 +75,7 @@ def _time_decay(path: list[Any]) -> list[tuple[Any, float]]:
     if not path:
         return []
     settings = get_settings()
-    funded_at = path[-1].sent_at if not hasattr(path[-1], "outcome") else _now()
-    # Use conversion as last point; fall back to latest touch.
+    # Use the last touch's sent_at as the conversion reference.
     funded_at = max(t.sent_at for t in path)
     weights: list[float] = []
     for t in path:

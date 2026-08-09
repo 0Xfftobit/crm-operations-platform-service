@@ -59,6 +59,21 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str = Field("localhost:9092", alias="KAFKA_BOOTSTRAP_SERVERS")
     kafka_topic: str = Field("followup-events", alias="KAFKA_TOPIC")   # inbound (subscribed)
 
+    # ── Cross-agent compliance precheck (CMS) ──────────────────────────────
+    precheck_enabled: bool = Field(False, alias="FUS_PRECHECK_ENABLED")
+    compliance_monitor_url: str = Field("", alias="COMPLIANCE_MONITOR_URL")
+    compliance_api_key: str = Field("", alias="COMPLIANCE_API_KEY")
+    precheck_timeout: float = Field(3.0, alias="FUS_PRECHECK_TIMEOUT")
+
+    # ── Real channel provider credentials (optional — falls back to mock if unset) ──
+    twilio_account_sid: str = Field("", alias="TWILIO_ACCOUNT_SID")
+    twilio_auth_token: str = Field("", alias="TWILIO_AUTH_TOKEN")
+    twilio_from_number: str = Field("", alias="TWILIO_FROM_NUMBER")
+    sendgrid_api_key: str = Field("", alias="SENDGRID_API_KEY")
+    sendgrid_from_email: str = Field("", alias="SENDGRID_FROM_EMAIL")
+    whatsapp_api_url: str = Field("", alias="WHATSAPP_BUSINESS_API_URL")
+    whatsapp_api_token: str = Field("", alias="WHATSAPP_BUSINESS_API_TOKEN")
+
     # ── Cadence / compliance parameters (System Design §7) ─────────────────
     quiet_hours_start: int = Field(21, alias="QUIET_HOURS_START")      # TCPA quiet hours begin
     quiet_hours_end: int = Field(8, alias="QUIET_HOURS_END")           # allowed = [end, start)

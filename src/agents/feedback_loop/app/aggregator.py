@@ -47,7 +47,9 @@ def _safe_auc(y_true: list[float], y_prob: list[float]) -> float | None:
         return None
 
 
-def _precision_recall_f1(y_true: list[float], y_pred: list[float]) -> tuple[float | None, float | None, float | None]:
+def _precision_recall_f1(
+    y_true: list[float], y_pred: list[float]
+) -> tuple[float | None, float | None, float | None, float | None]:
     tp = sum(1 for t, p in zip(y_true, y_pred) if t == 1.0 and p == 1.0)
     fp = sum(1 for t, p in zip(y_true, y_pred) if t == 0.0 and p == 1.0)
     fn = sum(1 for t, p in zip(y_true, y_pred) if t == 1.0 and p == 0.0)
@@ -61,7 +63,7 @@ def _precision_recall_f1(y_true: list[float], y_pred: list[float]) -> tuple[floa
         else None
     )
     accuracy = (tp + tn) / len(y_true) if y_true else None
-    return precision, recall, f1, accuracy  # type: ignore[return-value]
+    return precision, recall, f1, accuracy
 
 
 def _calibration_ece(y_true: list[float], y_prob: list[float], n_bins: int = 10) -> float | None:

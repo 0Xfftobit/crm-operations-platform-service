@@ -172,7 +172,7 @@ class MetricDefinitionRepository:
 
 class AttributionRepository:
     def __init__(self) -> None:
-        self._items: dict[str, AttributionRecord] = {}
+        self._items: dict[tuple[str, str], AttributionRecord] = {}
 
     def put(self, a: AttributionRecord) -> None:
         self._items[(a.deal_id, a.model)] = a

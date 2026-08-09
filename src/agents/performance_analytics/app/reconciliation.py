@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,18 +32,21 @@ def _funded_amount_for_period(period: str) -> float:
 
 
 def _period_grain(period: str) -> str:
-    if period.startswith("P"):
+    # ISO 8601 durations (e.g. "P1M", "P7D") are grain keywords, not buckets.
+    if re.fullmatch(r"P\d+[YMWD]", period):
         return "monthly"
-    if "-Q" in period:
-        return "quarterly"
-    if "-W" in period:
-        return "weekly"
-    parts = period.split("-")
-    if len(parts) == 2:
-        return "monthly"
-    if len(parts) == 3:
+    # Bucket formats.
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", period):
         return "daily"
-    return "yearly"
+    if re.fullmatch(r"\d{4}-W\d{2}", period):
+        return "weekly"
+    if re.fullmatch(r"\d{4}-\d{2}", period):
+        return "monthly"
+    if re.fullmatch(r"\d{4}-Q[1-4]", period):
+        return "quarterly"
+    if re.fullmatch(r"\d{4}", period):
+        return "yearly"
+    return "monthly"
 
 
 def reconcile_period(period: str) -> dict[str, Any]:

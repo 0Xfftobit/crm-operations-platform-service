@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import pickle
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -35,11 +35,11 @@ def _ensure_dirs(settings: Any) -> None:
 
 
 def _snapshot_path(dataset_id: str, settings: Any) -> Path:
-    return settings.data_path / "datasets" / f"{dataset_id}.pkl"
+    return settings.data_path / "datasets" / f"{dataset_id}.joblib"
 
 
 def _artifact_path(model_id: str, settings: Any) -> Path:
-    return settings.model_path / f"{model_id}.pkl"
+    return settings.model_path / f"{model_id}.joblib"
 
 
 def _binary_label(label_value: Any) -> float | None:
@@ -164,7 +164,7 @@ def assemble_training_dataset(
     else:
         path = _snapshot_path(dataset_id, settings)
         path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_pickle(path)
+        joblib.dump({"df": df}, path)
         snapshot_uri = str(path)
 
     feature_names_list = sorted(feature_names)
@@ -210,7 +210,11 @@ def train_model(
     meta, frame = get_dataset_repository().get(dataset_id)
     if meta is None:
         raise ValueError(f"unknown dataset {dataset_id}")
-    df = frame if frame is not None else pd.read_pickle(meta.snapshot_uri)
+    if frame is not None:
+        df = frame
+    else:
+        bundle = joblib.load(meta.snapshot_uri)
+        df = bundle.get("df") if isinstance(bundle, dict) else bundle
 
     train_df = df[df["__split__"] == "train"]
     test_df = df[df["__split__"] == "test"]
@@ -264,8 +268,7 @@ def train_model(
 
     if settings.storage_backend != "memory":
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(artifact_path, "wb") as f:
-            pickle.dump({"model": model, "feature_names": feature_cols, "seed": seed}, f)
+        joblib.dump({"model": model, "feature_names": feature_cols, "seed": seed}, artifact_path)
     else:
         # In-memory artifacts are stored on the repository object for tests.
         get_model_repository()._artifacts[model_id] = {"model": model, "feature_names": feature_cols, "seed": seed}  # type: ignore[attr-defined]

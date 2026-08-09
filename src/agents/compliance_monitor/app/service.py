@@ -34,10 +34,12 @@ from app.domain.models import (
     Consent,
     DisclosureTimer,
     DisparityResult,
+    Domain,
     PrecheckRequest,
     PrecheckResult,
     Regulation,
     RetentionRecord,
+    Severity,
 )
 from app.repositories import (
     get_alert_repository,
@@ -75,7 +77,7 @@ def _emit(alert: Alert, case: Case | None, settings: Settings) -> None:
 
 
 def _raise(
-    *, rule_id: str, domain: str, severity: str, entity_id: str = "", message: str = "",
+    *, rule_id: str, domain: Domain, severity: Severity, entity_id: str = "", message: str = "",
     evidence: dict | None = None, audit_seq: int | None = None, settings: Settings,
     force_case: bool = False,
 ) -> Alert | None:

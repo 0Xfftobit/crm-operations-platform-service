@@ -27,7 +27,12 @@ async def poll_once(client: httpx.AsyncClient, cursor: int) -> tuple[int, int]:
     count = 0
     for ev in events:
         service_record(ev)
-        cursor = max(cursor, int(ev.get("source_seq") or 0)) or cursor + 1
+        try:
+            seq = int(ev.get("source_seq") or 0)
+        except (ValueError, TypeError):
+            seq = cursor
+        source_seq = max(cursor, seq)
+        cursor = source_seq or (cursor + 1)
         count += 1
     if isinstance(data, dict) and data.get("cursor") is not None:
         cursor = int(data["cursor"])

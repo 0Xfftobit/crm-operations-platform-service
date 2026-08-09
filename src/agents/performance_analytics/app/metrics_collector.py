@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from app.clients.feedback_client import fanout_outcome
+from app.core.config import get_settings
 from app.domain.models import (
     CampaignCost,
     FinanceSourceOfTruth,
@@ -50,6 +52,7 @@ def ingest_outcome(outcome: OutcomeEvent) -> dict[str, Any]:
         "analytics.outcome",
         {"event_id": outcome.event_id, "deal_id": outcome.deal_id, "stage": outcome.stage},
     )
+    fanout_outcome(outcome, settings=get_settings())
     return {"status": "ingested", "event_id": outcome.event_id, "outcome_id": outcome.outcome_id}
 
 

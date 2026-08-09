@@ -48,6 +48,9 @@ class SequenceDef(BaseModel):
     version: int = 1
     steps: list[Step] = Field(default_factory=list)
     stop_rules: list[str] = Field(default_factory=list)      # replied|converted|opt_out|max_steps:7
+    # per-sequence daily/weekly cap (falls back to global if None)
+    freq_cap_day: int | None = None
+    freq_cap_week: int | None = None
     status: Literal["draft", "active", "archived"] = "active"
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

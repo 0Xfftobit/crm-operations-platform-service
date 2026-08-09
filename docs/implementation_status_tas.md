@@ -36,7 +36,7 @@ This document tracks what has been implemented against the TAS ticket (`docs/tic
 | FR-002 | Evaluate rule conditions using JSONLogic-style DSL over event + features | Must | ✅ | `app/engine/jsonlogic.py` (JSONLogic), `app/engine/cel_eval.py` (CEL subset), `app/engine/rule_engine.py::rule_conditions_match` |
 | FR-003 | Resolve rule conflicts by priority, specificity, deterministic tiebreak | Must | ✅ | `app/engine/conflict_resolver.py::resolve_action_conflicts` + `sort_rules_for_evaluation` |
 | FR-004 | Execute `create_task` with template, assignee, due date, SLA | Must | ✅ | `app/engine/action_executor.py` lines 217–267, `app/store.py::create_crm_task` |
-| FR-005 | Execute `update_record` (stage, owner, flags) via CRM service API | Must | 🚧 | `app/engine/action_executor.py` lines 289–303, `app/integrations/crm.py` is a stub connector |
+| FR-005 | Execute `update_record` (stage, owner, flags) via CRM service API | Must | 🚧 | `app/engine/action_executor.py` lines 289–303 and `app/integrations/crm.py::apply_record_updates` call `CRM_SERVICE_URL` when configured, falling back to an in-process stub otherwise |
 | FR-006 | Execute `request_document` emitting `document.requested` | Must | ✅ | `app/engine/action_executor.py` lines 306–334, `app/integrations/documents.py::resolve_document_types`, `app/workflows/doc_request_chain.py` |
 | FR-007 | Guarantee idempotent effects via `(trigger_id, rule_id, action_key)` | Must | ✅ | `app/idempotency.py` + `app/ledger.py`; keys built in `action_executor.py` lines 212, 269 |
 | FR-008 | Start durable Temporal workflows for multi-step automations | Must | 🚧 | `app/workflows/doc_request_temporal.py`, `app/workflows/generic_temporal.py`, `app/workflows/workflow_client.py`; Temporal disabled by default (`TEMPORAL_ENABLED=false`) |
@@ -68,7 +68,7 @@ This document tracks what has been implemented against the TAS ticket (`docs/tic
 | Recurring task support | ✅ | `recurring` + `recurrence_interval_hours` on rules; `spawn_recurring_tasks` in scheduler |
 | Task completion logging with outcome notes | ✅ | `POST /api/v1/tasks/{id}/complete`, `app/store.py::complete_task` |
 | Conflict detection (duplicate same-type task in window) | ✅ | `app/conflicts.py::has_recent_duplicate` + `DUPLICATE_TASK_WINDOW_HOURS` |
-| Calendar API integration for meeting tasks | 🚧 | `app/integrations/calendar.py` stub; `execute_connector_activity("create_calendar_event")` in `action_executor.py` |
+| Calendar API integration for meeting tasks | 🚧 | `app/integrations/calendar.py::create_calendar_event` calls `CALENDAR_SERVICE_URL` when configured and falls back to a synthetic stub; env vars added to `.env.example` |
 
 ### Technical Notes
 
@@ -77,7 +77,7 @@ This document tracks what has been implemented against the TAS ticket (`docs/tic
 | Rule storage `{trigger_event, conditions[], action_type, delay_hours, assignee, priority}` | ✅ | `WorkflowRuleCreate` in `app/schemas/rules.py`; stored in `app/store.py` |
 | Cron/scheduler for time-based task generation | ✅ | `app/scheduler.py` + `app/cron_triggers.py` |
 | Conflict detection (duplicate same type within short window) | ✅ | `app/conflicts.py` + `action_executor.py` lines 219–220 |
-| Integrate with calendar APIs | 🚧 | Calendar stub in `app/integrations/calendar.py`; real API P4 |
+| Integrate with calendar APIs | 🚧 | `app/integrations/calendar.py::create_calendar_event` calls `CALENDAR_SERVICE_URL` when configured, otherwise a synthetic stub; Google/Outlook/Exchange OAuth P4 |
 
 ### Acceptance Criteria
 
@@ -112,7 +112,26 @@ This document tracks what has been implemented against the TAS ticket (`docs/tic
 | **US-3** LLM-drafted note under guardrail | AC1: confidence < 0.85 → staged as draft, not posted | ✅ | `test_llm_write_blocked_without_approval`, `app/agents/llm_task_agent.py` |
 | | AC2: approvals/overrides captured and emitted | ✅ | `approve_llm_action` stores `approved_by`; feedback event emitted in `app/messaging/kafka_bus.py` `automation.llm.feedback` topic |
 
-## 7. P4 — Promotion / GA Launch (Future)
+## 7. P4 Implementation Update
+
+This P4 pass added the following production hardening pieces without breaking P0–P3 tests:
+
+1. **Cross-agent FUS fan-out**: `app/clients/followup_client.py` provides a synchronous `httpx` client that fans `deal.stage_changed` and `lead.assigned` events to the Follow-up Sequences `POST /api/v1/stage-changed` and `POST /api/v1/triggers/lead-scored` endpoints when `FUS_FANOUT_ENABLED=true` and `FOLLOW_UP_SEQUENCES_URL` is configured.
+2. **Environment variables**: `FOLLOW_UP_SEQUENCES_URL`, `FOLLOW_UP_SEQUENCES_API_KEY`, and `FUS_FANOUT_ENABLED` added to `.env.example` and `app/core/config.py`.
+
+This P4 pass also wired real HTTP clients for CRM, calendar, and feature-store integrations:
+
+3. **CRM/calendar/feature-store HTTP clients**: `app/integrations/crm.py`, `app/integrations/calendar.py`, and `app/integrations/feature_store.py` now call `CRM_SERVICE_URL`, `CALENDAR_SERVICE_URL`, and `FEATURE_STORE_URL` when configured, falling back to in-process stubs otherwise. `CRM_SERVICE_URL`/`CRM_API_KEY`, `CALENDAR_SERVICE_URL`/`CALENDAR_API_KEY`, and `FEATURE_STORE_URL`/`FEATURE_STORE_API_KEY` were added to `.env.example` and `app/core/config.py`.
+4. **Doc-request workflow fix**: `verify_documents_activity` in `app/workflows/doc_request_temporal.py:162-163` now defaults to `verified=False` when no document signals have been received.
+5. **`document_received` validation**: `POST /events/document-received` (`app/api/events.py:31-46`) resolves and validates the `workflow_id` before signaling a doc-request workflow.
+
+Items still deferred:
+- Production CRM/calendar/feature-store endpoints (Google/Outlook, enterprise CRM, Feast/Tecton).
+- Real Temporal cluster deployment and worker pools.
+- Production Kafka producer and partition-keyed consumer groups.
+- Postgres persistence, S3 export, full SSO/RBAC, load testing, and DLQ replay UI.
+
+## 8. P4 — Promotion / GA Launch (Future)
 
 P4 in the ticket is the Hardening milestone (weeks 16–18) followed by GA Launch. The following items are intentionally deferred to P4 and are **not** part of the current P0–P3 delivery:
 
@@ -121,8 +140,8 @@ P4 in the ticket is the Hardening milestone (weeks 16–18) followed by GA Launc
 | Production Kafka consumer group with partition-keyed per-deal ordering | Hardening | 📝 | `KAFKA_CONSUMER_ENABLED=false`; HTTP + in-process bus used in dev/tests |
 | Real Temporal cluster deployment and worker pools | Hardening | 📝 | `TEMPORAL_ENABLED=false`; local fallback orchestration only |
 | Production persistence (Postgres + Redis + S3 exports) | Hardening | 📝 | `STORAGE_BACKEND=memory` default; SQLite/Postgres/Redis adapters exist but not load-tested |
-| Real CRM service API integration (no direct DB writes) | Hardening | 📝 | `app/integrations/crm.py` is a stub |
-| Real calendar API integration (Google/Outlook/Exchange) | Hardening | 📝 | `app/integrations/calendar.py` is a stub |
+| Production CRM service API integration (no direct DB writes) | Hardening | 🚧 | `app/integrations/crm.py` calls `CRM_SERVICE_URL` when configured and falls back to a stub; production CRM endpoint + OAuth/SSO P4 |
+| Real calendar API integration (Google/Outlook/Exchange) | Hardening | 🚧 | `app/integrations/calendar.py` calls `CALENDAR_SERVICE_URL` when configured and falls back to a stub; production OAuth + real endpoints P4 |
 | Real LLM provider abstraction | Hardening | 📝 | `app/agents/llm_task_agent.py` uses deterministic confidence stub |
 | Load test to 15k events/s (p95 ≤ 3s) | Hardening | 📝 | `test_load_smoke_burst` is a smoke test only |
 | DLQ replay UI / one-click admin tooling | Hardening | 📝 | Replay API exists; UI is P4 |
@@ -135,7 +154,7 @@ P4 in the ticket is the Hardening milestone (weeks 16–18) followed by GA Launc
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Trigger Ingestor | 🚧 | `app/messaging/trigger_ingestor.py` + `app/api/events.py`; Kafka consumer stub in `app/kafka_consumer_group.py` |
-| Enrichment Resolver | 🚧 | `app/enrichment.py` + `app/integrations/feature_store.py`; feature-store integration optional/stub |
+| Enrichment Resolver | 🚧 | `app/integrations/feature_store.py::fetch_features` calls `FEATURE_STORE_URL` when configured and falls back to an in-process catalog; `CRM_SERVICE_URL` and `CALENDAR_SERVICE_URL` HTTP clients are similarly wired in `app/integrations/crm.py` and `app/integrations/calendar.py` |
 | Rule Engine | ✅ | `app/engine/rule_engine.py`, `app/engine/jsonlogic.py`, `app/engine/cel_eval.py` |
 | Conflict Resolver | ✅ | `app/engine/conflict_resolver.py` |
 | Action Executor | ✅ | `app/engine/action_executor.py` (task, record, doc, note, workflow, emit) |

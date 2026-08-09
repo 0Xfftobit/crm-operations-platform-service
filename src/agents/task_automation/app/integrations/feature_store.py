@@ -1,7 +1,14 @@
 """Feature Store client — deal/borrower enrichment features (§7)."""
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+import httpx
+
+from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # Stub feature catalog keyed by lead/deal
 _feature_cache: dict[str, dict[str, Any]] = {}
@@ -15,6 +22,14 @@ def seed_features(deal_id: str, features: dict[str, Any]) -> None:
     _feature_cache[deal_id] = features
 
 
+def _headers() -> dict[str, str]:
+    settings = get_settings()
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if settings.feature_store_url and settings.feature_store_api_key:
+        headers["X-API-Key"] = settings.feature_store_api_key
+    return headers
+
+
 def fetch_features(
     *,
     deal_id: str,
@@ -22,9 +37,27 @@ def fetch_features(
     product: str | None = None,
     stage: str | None = None,
 ) -> dict[str, Any]:
-    """Resolve features from Feature Store (stub) + inline context."""
+    """Resolve features from Feature Store HTTP service when configured, else stub + inline context."""
+    settings = get_settings()
     key = deal_id or lead_id or "unknown"
     cached = dict(_feature_cache.get(key, {}))
+
+    if settings.feature_store_url:
+        try:
+            with httpx.Client(timeout=settings.integration_timeout_s) as client:
+                resp = client.get(
+                    f"{settings.feature_store_url}/features/{deal_id}",
+                    headers=_headers(),
+                    params={"lead_id": lead_id or "", "product": product or "", "stage": stage or ""},
+                )
+            if resp.is_success:
+                data = resp.json()
+                data.setdefault("_provider", "feature_store_http")
+                return data
+            logger.warning("feature_store_fetch_failed", status=resp.status_code, body=resp.text)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("feature_store_fetch_error", error=str(exc))
+
     if product and "product" not in cached:
         cached["product"] = product
     if stage and "stage" not in cached:
@@ -36,7 +69,7 @@ def fetch_features(
         "missing_doc_flags": cached.get("missing_doc_flags", []),
         "product_type": cached.get("product_type") or product,
     }
-    return {**defaults, **cached}
+    return {**defaults, **cached, "_provider": "in_process_feature_store"}
 
 
 def store_stats() -> dict[str, Any]:

@@ -169,7 +169,21 @@ This document tracks what has been implemented against the PAS ticket (`docs/tic
 | **CEAAPSS-649** | System Architecture | ✅ | `docs/ticket_description_pas.md` §12 and `app/` component layout |
 | **CEAAPSS-650** | System Design | ✅ | `docs/ticket_description_pas.md` §13 (Detailed Design, Schemas, API Spec) and implemented API endpoints |
 
-## 8. P4 — Promotion / GA Launch (Future)
+## 8. P4 Implementation Update
+
+This P4 pass added the following production hardening pieces without breaking P0–P3 tests:
+
+1. **Cross-agent FLS outcome fan-out**: `app/clients/feedback_client.py` provides a synchronous `httpx` client that forwards `loan.funded` / `deal.lost` outcomes to the Feedback Loop `POST /api/v1/outcomes` when `OUTCOME_FANOUT_ENABLED=true` and `FEEDBACK_LOOP_URL` is configured.
+2. **Environment variables**: `OUTCOME_FANOUT_ENABLED`, `FEEDBACK_LOOP_URL`, `FEEDBACK_LOOP_API_KEY`, `FEEDBACK_LOOP_TIMEOUT` added to `.env.example` and `app/core/config.py`.
+
+3. **Bug-audit fixes**: `reconciliation._period_grain` now parses ISO-8601 durations and daily/weekly/monthly/quarterly/yearly bucket keywords with regex (`app/reconciliation.py:34-49`); `dashboard_builder` added `_in_period_or_skip` so funnels and scorecards do not include records with missing timestamps in every period (`app/dashboard_builder.py:577-581`); `attribution._time_decay` no longer references an undefined `funded_at` and uses the last touch in the path (`app/attribution.py:74-87`); `AttributionRepository._items` is typed as `dict[tuple[str, str], AttributionRecord]` (`app/repositories.py:175`); and the duplicate branch in `build_channel_effectiveness` was removed (`app/dashboard_builder.py:728-769`).
+
+Items still deferred:
+- Real-time Kafka streaming consumer.
+- Production Postgres / DW / S3 persistence.
+- Materialized KPI refresh, full SSO/RLS, BI dashboard rendering, scheduled email delivery, self-serve exploration UI.
+
+## 9. P4 — Promotion / GA Launch (Future)
 
 P4 in the ticket is the Promotion milestone. The following items are intentionally deferred to P4 and are **not** part of the current P0–P3 delivery:
 

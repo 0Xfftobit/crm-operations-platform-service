@@ -12,13 +12,28 @@ from app.domain.models import RetentionRecord
 from app.repositories import ConsentRepository, RetentionRepository
 
 
+def _add_years(dt: datetime, years: int) -> datetime:
+    """Add years to a datetime, accounting for leap-year edge cases."""
+    try:
+        return dt.replace(year=dt.year + years)
+    except ValueError:
+        # Feb 29 → Mar 1 on non-leap years.
+        return dt.replace(year=dt.year + years, month=3, day=1)
+
+
+def _default_retention_until(settings: Settings, now: datetime) -> datetime:
+    if settings.data_retention_days > 0:
+        return now + timedelta(days=settings.data_retention_days)
+    return _add_years(now, settings.data_retention_years)
+
+
 def register(
     repo: RetentionRepository, *, lead_id: str, category: str = "lead_data",
     settings: Settings, now: datetime, retained_until: datetime | None = None,
 ) -> RetentionRecord:
     rec = RetentionRecord(
         lead_id=lead_id, category=category,
-        retained_until=retained_until or now + timedelta(days=settings.data_retention_days))
+        retained_until=retained_until or _default_retention_until(settings, now))
     repo.put(rec)
     return rec
 

@@ -35,6 +35,8 @@ def document_received(body: DocumentReceivedRequest, _: Auth) -> dict[str, Any]:
         if not active:
             return {"error": "no_active_workflow"}
         wf_id = active[-1]["workflow_id"]
+        if not isinstance(wf_id, str):
+            return {"error": "no_workflow_id"}
     wf = signal_document_received(wf_id, document_id=body.document_id, doc_type=body.doc_type)
     if not wf:
         return {"error": "signal_failed"}

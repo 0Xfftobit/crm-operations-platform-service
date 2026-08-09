@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     # RLS
     default_tenant_id: str = Field("default", alias="DEFAULT_TENANT_ID")
 
+    # ── Cross-agent feedback loop fan-out (P4) ───────────────────────────────
+    outcome_fanout_enabled: bool = Field(False, alias="OUTCOME_FANOUT_ENABLED")
+    feedback_loop_url: str = Field("", alias="FEEDBACK_LOOP_URL")
+    feedback_loop_api_key: str = Field("", alias="FEEDBACK_LOOP_API_KEY")
+    feedback_loop_timeout: float = Field(5.0, alias="FEEDBACK_LOOP_TIMEOUT")
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_list(cls, v: object) -> object:

@@ -82,7 +82,8 @@ class Settings(BaseSettings):
     # Audit-chain integrity sweep cadence (FR-018); 0 disables the background task.
     chain_verify_interval_min: int = Field(30, alias="CHAIN_VERIFY_INTERVAL_MIN")
     # Data-privacy: lead-data retention window + pre-deletion warning (Data Privacy domain).
-    data_retention_days: int = Field(2555, alias="DATA_RETENTION_DAYS")   # ~7 years default
+    data_retention_years: int = Field(7, alias="DATA_RETENTION_YEARS")   # exact-year retention
+    data_retention_days: int = Field(0, alias="DATA_RETENTION_DAYS")     # override in days
     retention_warn_days: int = Field(7, alias="RETENTION_WARN_DAYS")
     # PII scanning of comm content + activity payloads (FR-007).
     pii_scan_enabled: bool = Field(True, alias="PII_SCAN_ENABLED")
@@ -113,7 +114,8 @@ class Settings(BaseSettings):
     kafka_group_id: str = Field("compliance-monitoring", alias="KAFKA_GROUP_ID")
 
     # ── Coverage-gap / dropped-event monitoring (BR-3, NFR coverage=100%) ───
-    coverage_heartbeat_max_min: int = Field(60, alias="COVERAGE_HEARTBEAT_MAX_MIN")  # silence→gap
+    coverage_heartbeat_max_min: int = Field(60, alias="COVERAGE_HEARTBEAT_MAX_MIN")
+    coverage_sweep_interval_min: int = Field(10, alias="COVERAGE_SWEEP_INTERVAL_MIN")
     dead_letter_alert_threshold: int = Field(1, alias="DEAD_LETTER_ALERT_THRESHOLD")
 
     # ── HTTP-poll upstream (EVENT_SOURCE_GATEWAY=http) ──────────────────────

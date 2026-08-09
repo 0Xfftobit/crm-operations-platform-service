@@ -1,14 +1,9 @@
 """Guardrail Gateway (System Architecture §3/§8, NFR guardrail-correctness) — the single choke.
 
-**Nothing sends without passing here, and it fails closed.** Before any outreach the gateway checks,
-in order: permanent suppression (opt-out / DNC) → verified consent → manual-outreach cooldown → TCPA
-quiet hours (contact-local) → global frequency cap. A failure resolves to one of three dispositions:
-
-- ``stop``  — terminal (opt-out, DNC): the sequence is stopped + the contact suppressed forever.
-- ``hold``  — transient (consent-unknown, cooldown, quiet-hours, freq-cap): reschedule to retry_at.
-- ``send``  — all checks passed.
-
-Because unknown consent ⇒ hold (never send), a missing consent basis can never produce a violation.
+**Nothing sends without passing here, and it fails closed.** Before any outreach the gateway checks
+(in order): suppression → consent → cooldown → quiet hours → global frequency cap → per-sequence
+frequency cap. A failure resolves to one of ``stop`` / ``hold`` / ``send`` dispositions. Unknown
+consent always maps to ``hold``, so a missing consent basis can never produce a violation.
 """
 from __future__ import annotations
 
@@ -33,8 +28,16 @@ class Decision:
         return self.disposition == "send"
 
 
-def check(contact: Contact, *, now: datetime, settings: Settings,
-          freq: FrequencyStore) -> Decision:
+def check(
+    contact: Contact,
+    *,
+    sequence_id: str,
+    now: datetime,
+    settings: Settings,
+    freq: FrequencyStore,
+    per_seq_day: int | None = None,
+    per_seq_week: int | None = None,
+) -> Decision:
     """Fail-closed pre-send evaluation for a contact at ``now``."""
     # 1. Permanent suppression — terminal.
     if contact.opted_out:
@@ -64,9 +67,17 @@ def check(contact: Contact, *, now: datetime, settings: Settings,
                                          quiet_start=settings.quiet_hours_start)
         return Decision("hold", "quiet_hours", retry)
 
-    # 5. Global frequency cap (across all cadences) — day + week.
-    remaining = freq.remaining(contact.tenant_id, contact.contact_id, now,
-                               cap_day=settings.freq_cap_day, cap_week=settings.freq_cap_week)
+    # 5. Global + per-sequence frequency cap — day + week.
+    remaining = freq.remaining(
+        contact.tenant_id,
+        contact.contact_id,
+        sequence_id,
+        now,
+        cap_day=settings.freq_cap_day,
+        cap_week=settings.freq_cap_week,
+        per_seq_day=per_seq_day,
+        per_seq_week=per_seq_week,
+    )
     if remaining <= 0:
         # retry at the next legal window tomorrow (day counter resets).
         tomorrow = quiet_hours.next_allowed(

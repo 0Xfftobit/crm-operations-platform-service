@@ -174,7 +174,18 @@ This document tracks what has been implemented against the FLS ticket (`docs/tic
 | **CEAAPSS-644** | System Architecture | ✅ | `docs/ticket_description_fls.md` §12 (Context, Components, Data Flow, Tech Stack) and `app/` component layout |
 | **CEAAPSS-645** | System Design | ✅ | `docs/ticket_description_fls.md` §13 (Detailed Design, Schemas, API Spec, MLOps Pipeline, Sequence) and implemented API endpoints |
 
-## 8. P4 — Promotion / GA Launch (Future)
+## 8. P4 Implementation Update
+
+This P4 pass added the following bug-audit fixes to the Feedback Loop agent while remaining a destination for cross-agent clients:
+
+- **PAS → FLS outcome fan-out**: `src/agents/performance_analytics/app/clients/feedback_client.py` forwards `loan.funded` / `deal.lost` outcome events from Performance Analytics to `POST /api/v1/outcomes` when `OUTCOME_FANOUT_ENABLED=true` and `FEEDBACK_LOOP_URL` are configured in Performance Analytics.
+- **Shared infrastructure**: `docker-compose.yml` now provisions Postgres, Redis, Redpanda (Kafka), Prometheus, Grafana, Schema Registry, and an OpenTelemetry Collector. FLS can switch from in-memory to disk persistence today; Postgres/S3 and Kafka integration remain P4.
+- **Bug-audit fixes**: `app/drift.py` now imports and uses `timedelta` for exact time-window comparisons (`app/drift.py:6,86-88`); `tests/test_feedback_loop.py` drift test passes. `app/model_retrainer.py` now uses `joblib` for dataset and model serialization and stores in-memory artifacts on the repository for tests when `STORAGE_BACKEND=memory` (`app/model_retrainer.py:9,167,218,271,274`).
+
+Items still deferred:
+- Real MLflow model registry, feature store, shadow/canary serving, production scheduler, Kafka consumer, Postgres/S3 persistence, and external alerting.
+
+## 9. P4 — Promotion / GA Launch (Future)
 
 P4 in the ticket is the Promotion milestone (weeks 18–22) followed by GA Launch. The following items are intentionally deferred to P4 and are **not** part of the current P0–P3 delivery:
 
@@ -201,9 +212,9 @@ P4 in the ticket is the Promotion milestone (weeks 18–22) followed by GA Launc
 | Outcome / Feedback Collector | ✅ | `app/collector.py` |
 | Label Builder | ✅ | `app/label_builder.py` |
 | Training-Data Assembler | ✅ | `app/model_retrainer.py::assemble_training_dataset` |
-| Drift Monitor | ✅ | `app/drift.py` (PSI per feature) |
+| Drift Monitor | ✅ | `app/drift.py` (PSI per feature); `timedelta` used for exact 30-day window comparisons |
 | Performance Monitor | ✅ | `app/aggregator.py` |
-| Retrain Orchestrator | ✅ | `app/service.py::auto_retrain`, `trigger_retrain`, drift-triggered retrain |
+| Retrain Orchestrator | ✅ | `app/service.py::auto_retrain`, `trigger_retrain`, drift-triggered retrain; `app/model_retrainer.py` uses `joblib` for dataset/model snapshots and in-memory artifact storage for tests |
 | Eval & Gate Service | ✅ | Accuracy + fairness gates in `train_model` and `promote_model` |
 | Deployment Manager | 📝 P4 | Direct promotion/rollback; shadow/canary ramp P4 |
 | Lineage / Registry Adapter | 📝 P4 | In-memory registry + lineage reports; MLflow adapter P4 |

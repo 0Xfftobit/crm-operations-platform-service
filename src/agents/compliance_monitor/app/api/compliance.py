@@ -1,7 +1,7 @@
 """Compliance operations API — pre-send hook, consent, activity ingest, fairness, disclosures,
 explainability, alerts/cases, and the RAG dashboard.
 """
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -158,7 +158,7 @@ def list_cases() -> dict:
 
 
 class CaseUpdate(BaseModel):
-    status: str | None = None
+    status: Literal["open", "investigating", "remediated", "closed"] | None = None
     assignee: str | None = None
 
 

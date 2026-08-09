@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     stage_tracking_api_key: str = Field("change-me-dev-key", alias="STAGE_TRACKING_API_KEY")
     lead_assignment_url: str = Field("", alias="LEAD_ASSIGNMENT_URL")
     lead_assignment_api_key: str = Field("change-me-dev-key", alias="LEAD_ASSIGNMENT_API_KEY")
+    crm_service_url: str = Field("", alias="CRM_SERVICE_URL")
+    crm_api_key: str = Field("", alias="CRM_API_KEY")
+    calendar_service_url: str = Field("", alias="CALENDAR_SERVICE_URL")
+    calendar_api_key: str = Field("", alias="CALENDAR_API_KEY")
+    follow_up_sequences_url: str = Field("", alias="FOLLOW_UP_SEQUENCES_URL")
+    follow_up_sequences_api_key: str = Field("", alias="FOLLOW_UP_SEQUENCES_API_KEY")
+    fus_fanout_enabled: bool = Field(False, alias="FUS_FANOUT_ENABLED")
     integration_timeout_s: float = Field(5.0, alias="INTEGRATION_TIMEOUT_S", ge=0.5)
 
     kafka_bootstrap_servers: str = Field("localhost:9092", alias="KAFKA_BOOTSTRAP_SERVERS")
@@ -82,6 +89,7 @@ class Settings(BaseSettings):
     loop_budget_ttl_hours: float = Field(1.0, alias="LOOP_BUDGET_TTL_HOURS", ge=0.1)
     blast_radius_warning_threshold: int = Field(100, alias="BLAST_RADIUS_WARNING_THRESHOLD", ge=1)
     feature_store_url: str = Field("", alias="FEATURE_STORE_URL")
+    feature_store_api_key: str = Field("", alias="FEATURE_STORE_API_KEY")
     otel_enabled: bool = Field(False, alias="OTEL_ENABLED")
 
     export_local_dir: str = Field("./data/exports", alias="EXPORT_LOCAL_DIR")

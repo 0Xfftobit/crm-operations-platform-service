@@ -14,12 +14,12 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # 1) deps only (cached until pyproject/uv.lock change)
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --extra redis --extra kafka --extra otel
 
 # 2) the app + install the project
 COPY app ./app
 COPY README.md ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra redis --extra kafka --extra otel
 
 
 FROM python:3.12-slim-bookworm AS runtime

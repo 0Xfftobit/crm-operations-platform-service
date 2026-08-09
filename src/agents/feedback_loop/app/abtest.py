@@ -17,7 +17,7 @@ _Z_95 = 1.96  # two-sided 95% (alpha=0.05)
 
 def _variant_hash(experiment_id: str, entity_id: str) -> int:
     """Deterministic 0-99 bucket from experiment + entity."""
-    h = hashlib.md5(f"{experiment_id}:{entity_id}".encode()).hexdigest()
+    h = hashlib.sha256(f"{experiment_id}:{entity_id}".encode()).hexdigest()
     return int(h, 16) % 100
 
 
@@ -71,7 +71,15 @@ def create_experiment(
     parsed_variants = [ExperimentVariant(**v) for v in variants]
     if traffic_split is None:
         total = len(parsed_variants)
-        traffic_split = {v.name: round(100 / total, 2) for v in parsed_variants}
+        raw = {v.name: 100 / total for v in parsed_variants}
+        rounded = {k: round(v, 2) for k, v in raw.items()}
+        # ensure the rounded splits sum to exactly 100; absorb the rounding
+        # delta in the first variant.
+        delta = round(100 - sum(rounded.values()), 2)
+        if parsed_variants:
+            first = parsed_variants[0].name
+            rounded[first] = round(rounded[first] + delta, 2)
+        traffic_split = rounded
     exp = Experiment(
         name=name,
         hypothesis=hypothesis,
@@ -219,8 +227,13 @@ def evaluate_experiment(experiment_id: str) -> dict[str, Any]:
                     guardrail_breached = True
                     break
 
-    if not guardrail_breached and exp.guardrail_threshold is not None:
-        # Fallback: treat primary conversion rate as guardrail if no separate guardrail metric.
+    if (
+        not guardrail_breached
+        and exp.guardrail_threshold is not None
+        and exp.guardrail_metric is None
+    ):
+        # Fallback: treat primary conversion rate as guardrail only when no
+        # separate guardrail metric is configured.
         rates = [vr["conversion_rate"] for vr in report["variants"].values()]
         if rates and min(rates) < exp.guardrail_threshold:
             guardrail_breached = True

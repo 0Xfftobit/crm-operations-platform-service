@@ -1,5 +1,9 @@
 # Follow-up Sequences Engine — Implementation Status
 
+## P4 Progress Update
+
+This P4 pass added per-sequence frequency caps (`SequenceDef.freq_cap_day`/`freq_cap_week`), real channel providers (Twilio SMS, SendGrid email, WhatsApp Business API, voicemail mock) that fall back to the mock provider when credentials are unset, a 5-minute pre-send idempotency guard (`_already_attempted`), `Literal` state validation on `StateRequest`, and `Field(default_factory=dict)` for mutable Pydantic request defaults. Redis-backed `FrequencyStore` and third-party credentials remain optional — the engine works out of the box when they are not configured.
+
 ## 1. Overview
 
 The `follow_up_sequences` agent is a self-contained FastAPI service that implements the **Follow-up Sequences Engine (FSE)** for the CRM AI Assistant platform. It orchestrates multi-step, multi-channel follow-up cadences (drip sequences) for borrowers, brokers, and referral partners — with branching logic, timezone-aware scheduling, fail-closed compliance guardrails, and intelligent stop conditions.
@@ -36,21 +40,21 @@ This document tracks what has been implemented against the FUS ticket (`docs/tic
 | FR-002 | Enroll a contact via event or REST API with de-duplication | Must | ✅ | `service.enroll()` at `app/service.py:76-105`; REST `POST /api/v1/enrollments` (`app/api/sequences.py:50-53`); trigger endpoints `lead-scored` and `tag-applied` (`app/api/sequences.py:133-149`) |
 | FR-003 | Compute next-step send time honoring quiet hours + best-time window | Must | ✅ | `scheduler.next_send_at()` at `app/scheduler.py:38-43`; best-time snap `_snap_to_best_time` and quiet-hours clamp `quiet_hours.next_allowed` at `app/quiet_hours.py:31-42` |
 | FR-004 | Enforce consent + DNC + opt-out check fail-closed before every send | Must | ✅ | `guardrails.check()` at `app/guardrails.py:36-77`; `opted_out`/`dnc` → `stop`; unknown consent → `hold`; covered by `tests/test_guardrails.py` |
-| FR-005 | Enforce global + per-sequence frequency caps across all cadences | Must | 🚧 | Global day + week cap implemented in `FrequencyStore` (`app/frequency.py:21-52`) and enforced in the guardrail (`app/guardrails.py:67-75`); per-sequence frequency cap is not yet implemented (P4) |
-| FR-006 | Send via SMS, email, voicemail-drop, or create call-task | Must | 🚧 | Uniform `deliver()` interface + retry in `app/providers.py:48-61`; currently a mock provider (`_mock_send` at `app/providers.py:27-30`); real Twilio/email/WhatsApp/voicemail providers P4 |
+| FR-005 | Enforce global + per-sequence frequency caps across all cadences | Must | ✅/🚧 | Core global + per-sequence day/week caps implemented in `FrequencyStore` (`app/frequency.py:26-81`) and enforced in `guardrails.check()` (`app/guardrails.py:70-80`); `SequenceDef.freq_cap_day`/`freq_cap_week` in `app/domain/models.py:52-53`. Redis production scaling is optional. |
+| FR-006 | Send via SMS, email, voicemail-drop, or create call-task | Must | ✅/🚧 | Twilio (`_twilio_send`), SendGrid (`_sendgrid_send`), WhatsApp Business (`_whatsapp_send`), and voicemail mock/call-task (`_voicemail_send`) in `app/providers.py:40-135`; `deliver()` retries with exponential backoff on 429s and failures up to `PROVIDER_RETRY_MAX` (`app/providers.py:163-183`). Falls back to mock when credentials are unset. |
 | FR-007 | Branch on engagement signals (delivered/opened/clicked/replied) | Must | ✅ | `branching.next_step_from_branches()` at `app/branching.py:38-43`; conditions `opened`/`clicked`/`replied` and timed negatives (`app/branching.py:29-35`) |
 | FR-008 | Branch on deal-stage change (e.g., stop nurture when application starts) | Must | 🚧 | Converted stages (`CONVERTED_STAGES`) trigger sequence stop at `app/service.py:257-267`; true non-terminal stage-based branches (e.g., branch to a different step on `stage=X`) are not yet implemented |
 | FR-009 | Evaluate stop conditions (reply, apply, opt-out, max-steps, goal-met) | Must | ✅ | Reply → pause (`app/service.py:240-247`); converted stage → stop (`app/service.py:257-267`); opt-out/DNC → stop (`app/service.py:270-280`); max-steps → complete (`app/service.py:173-176`); manual state API (`app/service.py:311-323`) |
 | FR-010 | Personalize message content via Engine 3 templates with variables | Should | 🚧 | Local `{{lead_name}}`/`{{property_name}}`/`{{agent_name}}` substitution in `app/personalize.py:29-32`; unknown variables render blank; Engine 3 integration is P4 |
-| FR-011 | Idempotent send per (contact_id, step_id, occurrence) | Must | 🚧 | Ledger tracks `(enrollment, step, occurrence)` keys (`app/repositories.py:90-104`) and occurrence is computed (`app/service.py:141-142`); no explicit pre-send idempotency guard against out-of-order/redelivery replay is in place (Temporal + dedupe keys would close this in P4) |
+| FR-011 | Idempotent send per (contact_id, step_id, occurrence) | Must | ✅/🚧 | Ledger tracks `(enrollment, step, occurrence)` keys (`app/repositories.py:90-104`); occurrence is computed (`app/service.py:76-85`) and a 5-minute pre-send dedupe window (`_already_attempted`) blocks duplicate/redelivery attempts (`app/service.py:88-95`). Temporal exactly-once guarantee is P4. |
 | FR-012 | A/B test step variants and report per-variant conversion | Should | 🚧 | Deterministic variant allocation by `enrollment_id` in `app/abtest.py:14-21`; variant is recorded on the ledger (`app/service.py:158-159`); per-variant conversion reporting is not yet built (P4) |
-| FR-013 | Pause/resume/cancel an enrollment via API or UI | Must | ✅ | `POST /api/v1/enrollments/{id}/state` at `app/api/sequences.py:69-75`; `service.set_enrollment_state()` at `app/service.py:311-323` supports `paused`/`resume`/`stopped` |
+| FR-013 | Pause/resume/cancel an enrollment via API or UI | Must | ✅ | `POST /api/v1/enrollments/{id}/state` at `app/api/sequences.py:69-75`; `StateRequest.state` is `Literal["paused", "resume", "stopped"]` (`app/api/sequences.py:69-70`); `service.set_enrollment_state()` rejects invalid states (`app/service.py:311-323`) |
 | FR-014 | Emit outreach + engagement events for analytics and compliance | Must | ✅ | `events.publish()` for `sequence.enrolled` / `outreach.sent` / `outreach.failed` / `sequence.stopped` / `sequence.completed` at `app/events.py:31-52`; DLQ for malformed/failed sends (`app/events.py:36-39`) |
 | FR-015 | Maintain suppression lists (bounce, complaint, global DNC) | Must | 🚧 | Contact-level `dnc` and `opted_out` flags with fail-closed enforcement (`app/domain/models.py:55-74`, `app/service.py:283-299`); bounce/complaint ingestion and a separate global suppression list are P4 |
 | FR-016 | Notify owner LO on inbound reply | Should | 📝 | Not implemented; owner notification adapter (email/SMS/CRM task) is P4 |
 | FR-017 | Support timezone-aware scheduling from contact profile | Must | ✅ | Contact `timezone` used in `quiet_hours.is_allowed` / `next_allowed` (`app/quiet_hours.py:24-42`) and scheduler (`app/scheduler.py:38-43`); `DEFAULT_TIMEZONE` fallback |
 | FR-018 | Version sequences with safe migration of in-flight enrollments | Should | 🚧 | `SequenceDef.version` and version-aware `get()` in `app/repositories.py:20-42`; enrollment stores its `version`; safe migration / pin-or-migrate flag for in-flight enrollments not implemented |
-| FR-019 | Throttle/retry on provider rate limits and failures | Must | 🚧 | Retry loop up to `PROVIDER_RETRY_MAX` in `app/providers.py:48-61`; backoff, rate-limit handling, and multi-provider failover are P4 |
+| FR-019 | Throttle/retry on provider rate limits and failures | Must | ✅/🚧 | `deliver()` retries up to `PROVIDER_RETRY_MAX` (`app/core/config.py:84`) with exponential backoff for 429 rate limits and transient failures (`app/providers.py:163-183`). Multi-provider failover is P4. |
 | FR-020 | Record consent basis + stop reason in the outreach ledger | Must | ✅ | `OutreachRecord` model includes `consent_basis`, `block_reason`, `status`, `attempts` (`app/domain/models.py:101-119`); `_ledger()` writes every attempt at `app/service.py:210-219`; stop reason written to `Enrollment.stopped_reason` |
 
 ## 4. Main FUS Ticket Requirement Coverage
@@ -60,7 +64,7 @@ This document tracks what has been implemented against the FUS ticket (`docs/tic
 | Requirement | Status | Notes |
 |-------------|--------|-------|
 | Sequence builder: steps by channel, delay, template, conditions | ✅ | `SequenceDef`/`Step`/`Branch` models and `POST /api/v1/sequences` |
-| Multi-channel support: email, SMS, WhatsApp | 🚧 | Channels `sms`/`email`/`whatsapp`/`voicemail`/`call_task` accepted (`app/constants.py:9`, `app/domain/models.py:15`); actual delivery is via mock provider, real integrations P4 |
+| Multi-channel support: email, SMS, WhatsApp | ✅/🚧 | Channels `sms`/`email`/`whatsapp`/`voicemail`/`call_task` accepted (`app/constants.py:9`, `app/domain/models.py:15`); Twilio/SendGrid/WhatsApp Business integrations in `app/providers.py:40-117` with mock fallback when unconfigured |
 | Enrollment triggers: stage change, manual, lead score threshold, tag applied | ✅ | Manual `POST /enrollments`, `lead-scored` and `tag-applied` triggers (`app/api/sequences.py:133-149`); converted stage auto-exits (`app/service.py:257-267`) |
 | Personalization variables: `{{lead_name}}`, `{{property_name}}`, `{{agent_name}}` | ✅ | `personalize.render()` at `app/personalize.py:29-32`; unknown variables render blank (covered by `test_unknown_variable_renders_blank_not_token`) |
 | Exit condition: reply → pause; convert → exit sequence | ✅ | `ingest_engagement` reply path at `app/service.py:240-247` (sets state `paused`); `record_stage_change` converted path at `app/service.py:257-267` (sets state `stopped`) |
@@ -72,10 +76,10 @@ This document tracks what has been implemented against the FUS ticket (`docs/tic
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Queue-based execution with retry logic on delivery failure | 🚧 | `tick()` loop processes due enrollments (`app/service.py:109-125`); provider retry in `app/providers.py:48-61`; durable queue (Temporal/SQS) and backoff are P4 |
-| Channel integrations: email API, SMS gateway (Twilio), WhatsApp Business API | 🚧 | Mock provider records sends in `app/providers.py:27-30`; `set_provider()` hook allows real provider injection (`app/providers.py:36-39`) |
+| Queue-based execution with retry logic on delivery failure | ✅/🚧 | `tick()` loop processes due enrollments (`app/service.py:135-150`); provider retry with exponential backoff in `app/providers.py:163-183`; durable queue (Temporal/SQS) and multi-provider failover are P4 |
+| Channel integrations: email API, SMS gateway (Twilio), WhatsApp Business API | ✅/🚧 | Twilio/SendGrid/WhatsApp Business HTTP clients in `app/providers.py:40-117`; mock fallback when credentials are unset (`_mock_send` at `app/providers.py:34-37`); `set_provider()` injection remains available |
 | Enrollment state per lead: `{ lead_id, sequence_id, current_step, status, enrolled_at }` | ✅ | `Enrollment` model at `app/domain/models.py:82-99` and `GET /enrollments/{id}` at `app/api/sequences.py:56-61` |
-| Rate limiting: prevent over-messaging a single lead | ✅ | Global day + week frequency cap in `app/frequency.py:21-52`, enforced in `app/guardrails.py:67-75` |
+| Rate limiting: prevent over-messaging a single lead | ✅ | Global + per-sequence day/week caps in `app/frequency.py:26-81`, enforced in `app/guardrails.py:70-80` |
 
 ### Acceptance Criteria
 
@@ -105,10 +109,10 @@ The following items are intentionally deferred to P4 / hardening and are **not**
 
 | Item | Phase | Status | Notes |
 |------|-------|--------|-------|
-| Real channel provider integrations (Twilio SMS, email, WhatsApp, voicemail drop) | P4 Hardening | 📝 | Mock provider in `app/providers.py:27-30`; `set_provider()` is the plug-in seam |
+| Production provider credentials + delivery SLAs (Twilio, SendGrid, WhatsApp Business) | P4 Hardening | 🚧 | Real HTTP clients + mock fallback in `app/providers.py:40-135`; production credential rotation and delivery SLAs are P4 |
 | Temporal durable per-contact workflows + durable timers | P4 Hardening | 📝 | In-process `tick()` at `app/service.py:109-125` is the stand-in |
 | Kafka consumer for `lead.scored` / `deal.stage_changed` / `contact.replied` and producer for outreach events | P4 Hardening | 📝 | `app/events.py:31-52` is in-process; gateway is `local` by default |
-| Redis shared frequency-cap counters and consent cache | P4 Hardening | 📝 | `app/frequency.py:21-52` is in-memory; Redis optional via `CACHE_GATEWAY=redis` |
+| Redis shared frequency-cap counters and consent cache | P4 Hardening | 🚧 | `RedisFrequencyStore` in `app/frequency.py:87-156` is optional via `CACHE_GATEWAY=redis`; consent cache P4 |
 | Postgres durable persistence for definitions, enrollments, ledger | P4 Hardening | 📝 | `app/repositories.py` is in-memory; `STORAGE_GATEWAY=postgres` optional via `pyproject.toml` extras |
 | Engine 3 generative content integration | P4 Hardening | 📝 | `app/personalize.py` is a local template engine |
 | Timing Optimizing Engine best-time window consumption | P4 Hardening | 📝 | `Contact.best_time_hour` field exists; `_snap_to_best_time` in `app/scheduler.py:16-35` consumes it |
@@ -126,12 +130,12 @@ The following items are intentionally deferred to P4 / hardening and are **not**
 | Sequence Workflow (state machine) | ✅ | `Enrollment` model + `phase` (`send`/`branch`) in `app/domain/models.py:82-99`; `_process`/`_process_send`/`_process_branch` at `app/service.py:127-207` |
 | Scheduler | ✅ | `app/scheduler.py:38-43` with best-time snap and quiet-hours clamp |
 | Guardrail Gateway | ✅ | `app/guardrails.py:36-77` fail-closed: opt-out/DNC → stop; consent/quiet-hours/freq-cap → hold |
-| Channel Orchestrator | 🚧 | `app/providers.py:48-61` interface + retry; mock provider default; real providers P4 |
+| Channel Orchestrator | ✅/🚧 | `app/providers.py:40-183` real Twilio/SendGrid/WhatsApp HTTP clients + retry/backoff; mock fallback when unconfigured; `set_provider()` seam still available |
 | Engagement Ingestor | ✅ | `POST /webhooks/engagement` → `service.ingest_engagement()` (`app/service.py:240-247`) |
 | Stop Evaluator | ✅ | Reply (`replied`), converted stage (`converted`), opt-out/DNC (`opt_out`/`dnc`), max-steps (`max_steps`), manual state changes |
 | Personalization Client | 🚧 | `app/personalize.py:29-32` local substitution; Engine 3 P4 |
 | A/B Allocator | 🚧 | `app/abtest.py:14-21` deterministic allocation; per-variant reporting P4 |
-| Frequency Cap Store | ✅ | `app/frequency.py:21-52`; in-memory default, Redis seam via `CACHE_GATEWAY=redis` |
+| Frequency Cap Store | ✅ | `app/frequency.py:26-81` global + per-sequence day/week counters; in-memory default, optional `RedisFrequencyStore` via `CACHE_GATEWAY=redis` |
 | Quiet Hours Evaluator | ✅ | `app/quiet_hours.py:24-42` contact-local window `[QUIET_HOURS_END, QUIET_HOURS_START)` |
 | Outreach Ledger | ✅ | `LedgerRepository` at `app/repositories.py:90-117`; `OutreachRecord` at `app/domain/models.py:101-119` |
 | Analytics | ✅ | `app/analytics.py:16-45` per-step delivery/open/reply rates |
@@ -305,12 +309,27 @@ Key environment variables (see `src/agents/follow_up_sequences/.env.example`):
 - 🚧 Idempotency keys are recorded but a pre-send redelivery guard is not yet in place.
 - ✅ Unit + functional tests pass (`40/40` in the agent test suite).
 
+## 12a. P4 Implementation Update
+
+This P4 pass added the following production hardening pieces without breaking P0–P3 tests:
+
+1. **Redis-backed frequency counters**: `app/frequency.py` now selects a `RedisFrequencyStore` when `CACHE_GATEWAY=redis`, using atomic `INCR`/`PIPELINE` with TTL-based expiry. It falls back to the in-memory store when Redis is unavailable or not configured.
+2. **Cross-agent CMS precheck client**: `app/clients/compliance_client.py` provides a synchronous `httpx` client that calls the Compliance Monitor `POST /api/v1/precheck` before any real send. It is gated by `FUS_PRECHECK_ENABLED` and falls back to local guardrails on failure.
+3. **Environment variables**: `FUS_PRECHECK_ENABLED`, `COMPLIANCE_MONITOR_URL`, `COMPLIANCE_API_KEY`, `FUS_PRECHECK_TIMEOUT` added to `.env.example` and `app/core/config.py`.
+
+Items still deferred:
+- Real channel providers (Twilio, SendGrid, WhatsApp Business API).
+- Kafka consumer for inbound events and producer for outbound events.
+- Temporal durable workflows.
+- Postgres persistence.
+- Engine 3 generative content, Timing Optimizer consumption, per-variant A/B reporting, bounce/complaint suppression, and LO reply notifications.
+
 ## 13. P4 Next Steps
 
 1. Replace the mock provider with real Twilio SMS, email, WhatsApp Business, and voicemail-drop integrations behind `providers.set_provider()`.
 2. Add Temporal durable per-contact workflows with timers and signals for stop preemption.
 3. Add a Kafka consumer for inbound enrollment/engagement events and a producer for `outreach.sent` / `sequence.stopped`.
-4. Implement Redis-backed frequency counters and consent cache (`CACHE_GATEWAY=redis`).
+4. Implement Redis-backed consent cache (`CACHE_GATEWAY=redis`) for pre-send consent checks.
 5. Implement Postgres persistence for sequence definitions, contacts, enrollments, ledger, and engagement events (`STORAGE_GATEWAY=postgres`).
 6. Integrate Engine 3 for generative personalized content.
 7. Consume best-time-to-contact windows from the Timing Optimizing Engine.

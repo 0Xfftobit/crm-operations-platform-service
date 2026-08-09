@@ -91,8 +91,8 @@ async def lifespan(app: FastAPI):
     if settings.event_source_gateway == "http":
         from app import http_source
         tasks.append(asyncio.create_task(http_source.poll_loop(stop)))
-    if settings.coverage_heartbeat_max_min > 0 and settings.chain_verify_interval_min > 0:
-        tasks.append(asyncio.create_task(_coverage_loop(settings.chain_verify_interval_min)))
+    if settings.coverage_heartbeat_max_min > 0 and settings.coverage_sweep_interval_min > 0:
+        tasks.append(asyncio.create_task(_coverage_loop(settings.coverage_sweep_interval_min)))
     if settings.audit_lifecycle_interval_min > 0:
         tasks.append(asyncio.create_task(_lifecycle_loop(settings.audit_lifecycle_interval_min)))
     yield

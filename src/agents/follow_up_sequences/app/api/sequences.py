@@ -4,10 +4,10 @@ webhooks, consent/opt-out, terminal triggers, ledger, and analytics.
 Write/ops endpoints require ``X-API-Key``; reads are open in this build. The ``/scheduler/tick``
 endpoint is the in-process stand-in for Temporal durable timers — advances every due enrollment.
 """
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app import analytics, events, service
 from app.api.deps import require_api_key
@@ -42,7 +42,7 @@ class EnrollRequest(BaseModel):
     contact_id: str
     sequence_id: str
     trigger: str = "manual"
-    context: dict = {}
+    context: dict = Field(default_factory=dict)
     version: int | None = None
     tenant_id: str = "default"
 
@@ -67,7 +67,7 @@ def list_enrollments(contact_id: str | None = None, tenant: str = "default") -> 
 
 
 class StateRequest(BaseModel):
-    state: str                                  # paused | resume | stopped
+    state: Literal["paused", "resume", "stopped"]  # FR-013: pause/resume/stop
 
 
 @router.post("/enrollments/{enrollment_id}/state", summary="LO override: pause/resume/stop")
@@ -127,7 +127,7 @@ class LeadScoredRequest(BaseModel):
     score: float
     sequence_id: str
     tenant_id: str = "default"
-    context: dict = {}
+    context: dict = Field(default_factory=dict)
 
 
 @router.post("/triggers/lead-scored", summary="Auto-enroll when score ≥ threshold (FR: trigger)")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -85,14 +85,18 @@ def psi(reference: list[float], current: list[float], n_bins: int = 10) -> float
 def _recent_values(engine_name: str, feature: str, max_age_days: int = 30) -> list[float]:
     now = datetime.now(UTC)
     values: list[float] = []
+    cutoff = timedelta(days=max_age_days)
     for p in get_prediction_repository().list(engine_name=engine_name):
-        if (now - p.scored_at).days <= max_age_days and feature in p.features and _is_number(p.features[feature]):
+        if now - p.scored_at <= cutoff and feature in p.features and _is_number(p.features[feature]):
             values.append(float(p.features[feature]))
     return values
 
 
 def _consecutive_alerts(engine_name: str, feature: str) -> int:
-    records = get_drift_repository().list(engine_name=engine_name, feature=feature)
+    records = sorted(
+        get_drift_repository().list(engine_name=engine_name, feature=feature),
+        key=lambda r: r.evaluated_at,
+    )
     count = 0
     for r in reversed(records):
         if r.alert:

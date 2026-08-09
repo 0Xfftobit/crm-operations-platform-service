@@ -159,7 +159,8 @@ class DocRequestChainWorkflow:
             start_to_close_timeout=activity_timeout,
             retry_policy=retry_policy,
         )
-        self._verified = bool(self._verification.get("verified", True))
+        verification = self._verification or {}
+        self._verified = bool(verification.get("verified", False))
         self._state = "Completed"
 
         status = self.get_status()

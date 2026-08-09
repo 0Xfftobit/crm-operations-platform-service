@@ -1,253 +1,167 @@
 # Testing Guide
 
-This document describes how to run tests for the `feedback_loop` agent and the repository-wide integration suite.
+This document describes how to run tests for all five agent engines, the shared API gateway, and the repository-wide integration suite.
 
-## 1. Feedback Loop Agent Tests
+## 1. Quick Start
 
-The agent has its own isolated test suite under `src/agents/feedback_loop/tests/`. It uses `pytest` and the FastAPI `TestClient`.
-
-### Run all agent tests
+### All engines (from each agent directory)
 
 ```bash
-cd src/agents/feedback_loop
-PYTHONPATH=. pytest tests
+for d in src/agents/*/; do
+  (cd "$d" && uv run pytest -q)
+done
 ```
 
-### Run a specific test class
-
-```bash
-PYTHONPATH=. pytest tests/test_feedback_loop.py::TestCapture -q
-```
-
-### Run with coverage
-
-```bash
-PYTHONPATH=. pytest tests --cov=app --cov-report=term-missing
-```
-
-### Use the Makefile
-
-```bash
-cd src/agents/feedback_loop
-make test      # uv run pytest -q
-make lint      # uv run ruff check --fix app tests
-make fmt       # uv run ruff format app tests
-```
-
-## 2. What the Agent Tests Cover
-
-`tests/test_feedback_loop.py` is organized into five classes that map to the FLS phases:
-
-| Class | Scope | Count |
-|-------|-------|-------|
-| `TestCapture` | Prediction logging, duplicate detection, outcomes, overrides, explicit feedback, auth, quarantine | 6 |
-| `TestLabels` | Windowed matching, out-of-window labels, batch label build | 3 |
-| `TestMetrics` | Precision, recall, F1, accuracy computation | 1 |
-| `TestDrift` | PSI computation and sustained drift trigger | 2 |
-| `TestRetraining` | Dataset assembly, model training, promotion, lineage, fairness gate | 3 |
-| `TestABTest` | Experiment creation, consistent allocation, power-analysis gating, guardrail early stop | 3 |
-| `TestSubtasks` | Performance/scheduled retrain triggers, data validation, retraining event logs | 3 |
-
-Total: **22 tests** covering P0–P3 of the FLS plus CEAAPSS-559 and CEAAPSS-560.
-
-## 3. Root Integration Tests
-
-The top-level suite validates the API gateway and agent wiring.
+### Root gateway / integration suite
 
 ```bash
 cd /path/to/crm-operations-platform-service
-pytest tests
+python -m pytest tests -q
 ```
 
-Current integration tests:
+### Lint and format
 
-- `tests/integration/test_gateway.py` — health endpoint and `/agents` discovery listing.
+```bash
+# Root gateway + shared config
+ruff check src config tests
 
-## 4. Linting & Formatting
+# Each engine
+for d in src/agents/*/; do
+  (cd "$d" && ruff check app tests)
+done
+```
 
-The agent uses `ruff` for both linting and formatting. The root `.venv` includes `ruff` so it can be invoked from the repository root.
+## 2. Per-Agent Test Commands
 
-### Lint
+### Compliance Monitor
+
+```bash
+cd src/agents/compliance_monitor
+uv run pytest -q
+```
+
+Expected: `106 passed`
+
+### Feedback Loop
 
 ```bash
 cd src/agents/feedback_loop
-ruff check app tests
+uv run pytest -q
 ```
 
-### Auto-fix safe issues
+Expected: `22 passed`
+
+### Follow-up Sequences
 
 ```bash
-ruff check app tests --fix
+cd src/agents/follow_up_sequences
+uv run pytest -q
 ```
 
-### Format
+Expected: `40 passed`
+
+### Performance Analytics
 
 ```bash
-ruff format app tests
+cd src/agents/performance_analytics
+uv run pytest -q
 ```
 
-## 5. Manual API Smoke Tests
+Expected: `34 passed`
 
-Start the agent:
+### Task Automation
 
 ```bash
-cd src/agents/feedback_loop
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8009 --reload
+cd src/agents/task_automation
+uv run pytest -q
 ```
 
+Expected: `69 passed, 1 skipped`
+
+## 3. Gateway / Integration Tests
+
+Location: `tests/integration/test_gateway.py`
+
 ```bash
-curl -H "X-API-Key: dev-key" \
+cd /path/to/crm-operations-platform-service
+python -m pytest tests/integration/test_gateway.py -q
+```
+
+Coverage:
+
+- `GET /health` (unauthenticated)
+- `GET /agents` discovery (unauthenticated)
+- `GET /ready` with no upstreams configured returns `degraded`
+- Proxy path `/{slug}/{path}` requires `X-API-Key`
+- Unknown agent slug returns `404`
+- Unconfigured upstream returns `502`
+- Default dev key rejected in non-local `ENV`
+
+## 4. P4 Feature Tests
+
+### Gateway
+
+The new P4 tests live in `tests/integration/test_gateway.py`. They validate auth, header forwarding, per-agent timeouts, and unknown/upstream error handling.
+
+### Follow-up Sequences
+
+- Redis-backed frequency counters: `app/frequency.py` selects Redis when `CACHE_GATEWAY=redis`; falls back to in-memory.
+- CMS precheck client: `app/clients/compliance_client.py`. Add `FUS_PRECHECK_ENABLED=true` and `COMPLIANCE_MONITOR_URL` to exercise.
+
+### Performance Analytics
+
+- FLS outcome fan-out: `app/clients/feedback_client.py`. Add `OUTCOME_FANOUT_ENABLED=true` and `FEEDBACK_LOOP_URL` to exercise.
+
+### Task Automation
+
+- FUS fan-out: `app/clients/followup_client.py`. Add `FUS_FANOUT_ENABLED=true` and `FOLLOW_UP_SEQUENCES_URL` to exercise.
+
+## 5. Manual Smoke Tests
+
+### Start the local stack
+
+```bash
+docker compose --profile infra up --build
+```
+
+This starts Postgres, Redis, Redpanda (Kafka), Prometheus, Grafana, the OpenTelemetry Collector, the five agents, and the gateway.
+
+### Gateway health / ready
+
+```bash
+curl http://localhost:8080/health
+curl http://localhost:8080/ready -H "X-API-Key: change-me-dev-key"
+```
+
+### Proxy to an engine
+
+```bash
+curl http://localhost:8080/compliance-monitor/api/v1/health \
+  -H "X-API-Key: change-me-dev-key"
+
+# Create a sequence through the gateway
+curl http://localhost:8080/follow-up-sequences/api/v1/sequences \
+  -H "X-API-Key: change-me-dev-key" \
   -H "Content-Type: application/json" \
-  -X POST http://127.0.0.1:8009/api/v1/predictions \
+  -X POST \
   -d '{
-    "engine_name": "lead_scoring",
-    "model_version": "1.0.0",
-    "entity_id": "lead-123",
-    "features_ref": "fs://snap/2026-06-15T18:00Z/lead-123",
-    "features": {"f1": 1.0, "f2": 0.5},
-    "output": {"probability": 0.8}
+    "sequence_id": "sq-1",
+    "name": "Welcome",
+    "tenant_id": "default",
+    "version": 1,
+    "steps": [
+      {"id": "s1", "channel": "email", "delay": "PT0M", "template": "Hi {{name}}"}
+    ]
   }'
 ```
 
-OpenAPI docs are available at `http://127.0.0.1:8009/docs`.
+## 6. CI Notes
 
-## 6. Expected Results
+A CI job should:
 
-| Command | Expected Result |
-|---------|----------------|
-| `pytest tests` in agent dir | `22 passed` |
-| `pytest tests` in repo root | `2 passed` |
-| `ruff check app tests` | no errors |
-| `ruff format app tests` | formats in place |
+1. Install dependencies (`uv sync` or `pip install -r requirements.txt` in each engine and the root).
+2. Run `ruff check` in the root (`ruff check src config tests`) and in each engine.
+3. Run `pytest` in the root (`python -m pytest tests`).
+4. Run `uv run pytest -q` in `src/agents/{compliance_monitor,feedback_loop,follow_up_sequences,performance_analytics,task_automation}`.
 
-## 7. Performance Analytics Agent Tests
-
-The agent has its own isolated test suite under `src/agents/performance_analytics/tests/`. It uses `pytest` and the FastAPI `TestClient`.
-
-### Run all agent tests
-
-```bash
-cd src/agents/performance_analytics
-uv run pytest tests
-```
-
-### Run with verbose output
-
-```bash
-cd src/agents/performance_analytics
-uv run pytest tests -v
-```
-
-Expected (latest run):
-
-```
-23 passed, 1 warning in ~3s
-```
-
-### Run a specific test class
-
-```bash
-cd src/agents/performance_analytics
-uv run pytest tests/test_performance_analytics.py::TestIngestion -q
-```
-
-### Use the Makefile
-
-```bash
-cd src/agents/performance_analytics
-make test      # uv run pytest -q
-make lint      # uv run ruff check --fix app tests
-make fmt       # uv run ruff format app tests
-```
-
-### What the Agent Tests Cover
-
-`tests/test_performance_analytics.py` is organized into classes that map to the PAS phases:
-
-| Class | Scope | Count |
-|-------|-------|-------|
-| `TestIngestion` | Touch/outcome/cost/finance ingestion, duplicate detection, API-key auth | 4 |
-| `TestRLS` | Row-level security tenant/team/rep filters | 3 |
-| `TestSemantic` | Governed metric definitions, versioned metric publication, superseding, history, lineage, explore, lifecycle | 4 |
-| `TestKpi` | Governed metric query, conversion rates, channel/rep dimensions, period filters, numerator/denominator | 4 |
-| `TestFunnel` | Pipeline funnel with stage counts and drop-off | 1 |
-| `TestCohorts` | Cohort conversion analysis by acquisition month | 1 |
-| `TestScorecards` | Rep scorecards with `as_of_date` and leaderboard ranking | 2 |
-| `TestAttribution` | Multi-touch attribution credits (sum to one), ranked summary, period filtering, attribution by entity, CSV/PDF export | 5 |
-| `TestChannelEffectiveness` | Channel metrics, conversion contribution, recommendations | 2 |
-| `TestReconciliation` | Finance source-of-truth reconciliation pass/fail | 2 |
-| `TestAlerts` | Threshold-based conversion alert | 1 |
-| `TestReports` | Scheduled reports, metric/funnel/channel-effectiveness export, CSV and PDF | 4 |
-| `TestABUplift` | Treatment vs control conversion lift with p-value | 1 |
-
-Total: **34 tests** covering P0–P3 of the PAS plus CEAAPSS-562 (ROI Attribution) and CEAAPSS-563 (Channel Effectiveness).
-
-### Manual API Smoke Tests
-
-Start the agent:
-
-```bash
-cd src/agents/performance_analytics
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8007 --reload
-```
-
-Ingest a touch and an outcome:
-
-```bash
-curl -H "X-API-Key: change-me-dev-key" \
-  -H "Content-Type: application/json" \
-  -X POST http://127.0.0.1:8007/api/v1/ingest/touch \
-  -d '{
-    "touch_id": "t-1",
-    "contact_pid": "c-1",
-    "deal_id": "d-1",
-    "rep_id": "r-1",
-    "team_id": "team-a",
-    "channel": "email",
-    "sent_at": "2026-06-01T12:00:00+00:00"
-  }'
-
-curl -H "X-API-Key: change-me-dev-key" \
-  -H "Content-Type: application/json" \
-  -X POST http://127.0.0.1:8007/api/v1/ingest/outcome \
-  -d '{
-    "outcome_id": "o-1",
-    "contact_pid": "c-1",
-    "deal_id": "d-1",
-    "stage": "funded",
-    "amount": 300000,
-    "event_type": "loan.funded",
-    "occurred_at": "2026-06-15T12:00:00+00:00"
-  }'
-```
-
-Query a KPI:
-
-```bash
-curl -X GET "http://127.0.0.1:8007/api/v1/kpi/deal_count"
-```
-
-OpenAPI docs are available at `http://127.0.0.1:8007/docs`.
-
-### Expected Results
-
-| Command | Expected Result |
-|---------|----------------|
-| `uv run pytest tests` in agent dir | `34 passed, 1 warning` |
-| `uv run pytest tests -v` in agent dir | `34 passed` with per-test names |
-| `PYTHONPATH=. pytest tests` from repo root | `2 passed` |
-| `uv run ruff check app tests` | no errors |
-| `uv run ruff format app tests` | formats in place |
-
-## 8. CI Notes
-
-A minimal CI job should:
-
-1. Install dependencies (`uv sync` or `pip install -r requirements.txt`).
-2. Run `ruff check app tests` in `src/agents/feedback_loop`.
-3. Run `pytest tests` in `src/agents/feedback_loop`.
-4. Run `ruff check app tests` in `src/agents/performance_analytics`.
-5. Run `pytest tests` in `src/agents/performance_analytics`.
-6. Run `pytest tests` from the repo root.
-
-Because the `feedback_loop` engine uses `scikit-learn`, the first import is relatively slow; allow extra time for cold-start test runs.
+The `feedback_loop` engine uses `scikit-learn`; the first import is relatively slow, so allow extra time for cold-start test runs.

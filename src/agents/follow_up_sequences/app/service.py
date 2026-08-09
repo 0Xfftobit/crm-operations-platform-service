@@ -6,10 +6,11 @@ signals preempt scheduled steps: reply → **pause**, apply/convert → **stop(c
 **stop + permanent suppression**. Global frequency cap + TCPA quiet hours + consent are enforced on
 every send. Emits ``sequence.enrolled`` / ``outreach.sent`` / ``sequence.stopped`` / … (FR/§6).
 """
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from app import abtest, branching, events, guardrails, personalize, providers, scheduler
+from app.clients import compliance_client
 from app.constants import CONVERTED_STAGES
 from app.core.config import Settings, get_settings
 from app.domain.models import (
@@ -70,6 +71,31 @@ def _max_steps(seq: SequenceDef) -> int | None:
             except ValueError:
                 return None
     return None
+
+
+def _occurrence(enrollment: Enrollment, step: Step, now: datetime) -> int:
+    """Return the next occurrence number for this (enrollment, step)."""
+    return (
+        sum(
+            1
+            for r in get_ledger_repository().for_enrollment(enrollment.enrollment_id)
+            if r.step_id == step.id and r.status in ("sent", "failed", "blocked")
+        )
+        + 1
+    )
+
+
+def _already_attempted(enrollment: Enrollment, step: Step, now: datetime) -> bool:
+    """Idempotency guard: a final attempt exists within the de-dupe window."""
+    window_start = now - _IDEMPOTENCY_WINDOW
+    for r in get_ledger_repository().for_enrollment(enrollment.enrollment_id):
+        if r.step_id == step.id and r.status in ("sent", "failed", "blocked") \
+                and r.sent_at >= window_start:
+            return True
+    return False
+
+
+_IDEMPOTENCY_WINDOW = timedelta(seconds=300)
 
 
 # ── Enrollment ─────────────────────────────────────────────────────────────
@@ -137,9 +163,21 @@ def _process(enrollment: Enrollment, contact: Contact, seq: SequenceDef, *, now:
 
 def _process_send(enrollment: Enrollment, contact: Contact, seq: SequenceDef, step: Step, *,
                   now: datetime, settings: Settings) -> str:
-    decision = guardrails.check(contact, now=now, settings=settings, freq=get_freq())
-    occ = sum(1 for r in get_ledger_repository().for_enrollment(enrollment.enrollment_id)
-              if r.step_id == step.id and r.status == "sent") + 1
+    if _already_attempted(enrollment, step, now):
+        _ledger(enrollment, step, "held", _occurrence(enrollment, step, now), contact,
+                block_reason="duplicate_attempt", now=now)
+        return "held"
+
+    decision = guardrails.check(
+        contact,
+        sequence_id=seq.sequence_id,
+        now=now,
+        settings=settings,
+        freq=get_freq(),
+        per_seq_day=seq.freq_cap_day,
+        per_seq_week=seq.freq_cap_week,
+    )
+    occ = _occurrence(enrollment, step, now)
 
     if decision.disposition == "stop":                       # opt-out / DNC → terminal
         _ledger(enrollment, step, "blocked", occ, contact, block_reason=decision.reason, now=now)
@@ -153,12 +191,27 @@ def _process_send(enrollment: Enrollment, contact: Contact, seq: SequenceDef, st
 
     variant, template = abtest.allocate(step, enrollment.enrollment_id)   # A/B
     body = personalize.render(template, contact, enrollment.context)      # {{vars}}
+
+    # Centralised compliance precheck (P4): consult the Compliance Monitor before sending.
+    cms = compliance_client.precheck(
+        contact, step.channel, body, now, settings=settings
+    )
+    if cms is not None and cms.get("decision") == "deny":
+        reasons = cms.get("reasons", [])
+        block_reason = "compliance:" + ",".join(reasons) if reasons else "compliance:deny"
+        _ledger(enrollment, step, "blocked", occ, contact, template=template, rendered=body,
+                block_reason=block_reason, variant=variant, now=now)
+        if any(r in ("opt_out", "dnd_registry", "no_consent") for r in reasons):
+            _finish(enrollment, "opt_out" if "opt_out" in reasons else "compliance", now)
+            return "stopped"
+        return "held"
+
     res = providers.deliver(contact, step.channel, body, max_attempts=settings.provider_retry_max)
     status = "sent" if res.success else "failed"
     _ledger(enrollment, step, status, occ, contact, template=template, rendered=body,
             provider=res.provider, attempts=res.attempts, variant=variant, now=now)
     if res.success:
-        get_freq().increment(contact.tenant_id, contact.contact_id, now)
+        get_freq().increment(contact.tenant_id, contact.contact_id, seq.sequence_id, now)
         enrollment.steps_sent += 1
         enrollment.variant = variant
         events.publish(events.EVENT_SENT, {"enrollment_id": enrollment.enrollment_id,
@@ -312,6 +365,8 @@ def set_enrollment_state(enrollment_id: str, *, state: str) -> dict:
     e = get_enrollment_repository().get(enrollment_id)
     if e is None:
         return {"status": "error", "reason": "unknown_enrollment"}
+    if state not in ("paused", "resume", "stopped"):
+        return {"status": "error", "reason": "invalid_state"}
     if state == "resume" and e.state == "paused":
         e.state = "active"
         e.next_action_at = _now()

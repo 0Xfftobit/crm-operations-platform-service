@@ -180,7 +180,21 @@ Test coverage: **106/106 unit and functional tests pass** in `src/agents/complia
 | **CEAAPSS-654** | System Architecture | ✅ | `docs/ticket_description_cms.md` §12 (Context, Components, Data Flow, Tech Stack) and `app/` component layout |
 | **CEAAPSS-655** | System Design | ✅ | `docs/ticket_description_cms.md` §13 (Detailed Design, Schemas, API Spec, Workflows, Sequence) and implemented API endpoints |
 
-## 8. P4 — Promotion / GA Launch (Future)
+## 8. P4 Implementation Update
+
+This P4 pass added the following bug-audit and hardening fixes to the Compliance Monitor agent while remaining a target for cross-agent clients:
+
+- **FUS → CMS precheck**: `src/agents/follow_up_sequences/app/clients/compliance_client.py` calls `POST /api/v1/precheck` to centralise compliance screening before any outbound send. Configure `COMPLIANCE_MONITOR_URL` and `COMPLIANCE_API_KEY` in `src/agents/follow_up_sequences/.env`.
+- **Shared infrastructure**: `docker-compose.yml` now provisions Postgres, Redis, Redpanda (Kafka), Prometheus, Grafana, Schema Registry, and an OpenTelemetry Collector for CMS to use when `STORAGE_GATEWAY=postgres`, `CACHE_GATEWAY=redis`, `KAFKA_PRODUCE=true`, and `KAFKA_INGEST=true`.
+- **Bug-audit fixes**: `app/main.py` `_coverage_loop` now uses `coverage_sweep_interval_min` (`app/main.py:94-95`); `app/core/config.py` adds `coverage_sweep_interval_min` and `data_retention_years` (`app/core/config.py:85,118`); `app/http_source.poll_once` safely handles non-numeric `source_seq` and `cursor` (`app/http_source.py:31-38`); `app/api/compliance.py::CaseUpdate.status` is `Literal["open", "investigating", "remediated", "closed"]` (`app/api/compliance.py:161`) and `app/service.py::_raise` is typed with `Domain`/`Severity` (`app/service.py:79-83`); `app/privacy.py` retention uses exact-year `data_retention_years` with leap-year handling, falling back to `data_retention_days` if > 0 (`app/privacy.py:15-27`); `app/disclosures.py` `days_left` is now a float from total seconds (`app/disclosures.py:44-50`); and `app/coldstore.py` lists S3 ranges once and uses `encoding="utf-8"` for local/S3 files (`app/coldstore.py:45-46,79-89,97,110-111`).
+
+Items still deferred:
+- Engine-8 central correlation + signed policy verification.
+- Scheduled batch fair-lending / redlining analytics (Spark/Flink).
+- External consent / DNC service integration.
+- S3 WORM / Object Lock automation and BI dashboard rendering.
+
+## 9. P4 — Promotion / GA Launch (Future)
 
 P4 in the ticket is the Integration milestone (weeks 16–19), followed by P5 Hardening and GA Launch. The following items are intentionally deferred and are **not** part of the current P0–P3 delivery:
 
@@ -343,9 +357,11 @@ Key environment variables (see `src/agents/compliance_monitor/.env.example`):
 | `DISCLOSURE_WARN_OFFSETS` | `7,2` | Days before deadline to warn |
 | `CASE_SLA_HOURS` | `72` | SLA on auto-opened critical cases |
 | `AUDIT_RETENTION_YEARS` | `7` | Audit retention horizon |
-| `DATA_RETENTION_DAYS` | `2555` | Lead-data retention before anonymization |
+| `DATA_RETENTION_YEARS` | `7` | Exact-year lead-data retention before anonymization (leap-year safe) |
+| `DATA_RETENTION_DAYS` | `0` | Optional day-level override for retention (non-zero takes precedence) |
 | `EXPORT_ROLES` | `compliance_officer,auditor,admin` | Roles allowed to export the audit trail |
 | `CHAIN_VERIFY_INTERVAL_MIN` | `30` | Periodic audit-chain integrity sweep (0 disables) |
+| `COVERAGE_SWEEP_INTERVAL_MIN` | `10` | Periodically sweep for silent sources / coverage gaps (0 disables) |
 | `MERKLE_ANCHOR_INTERVAL_MIN` | `0` | Periodic Merkle-root anchoring (0 disables) |
 | `PII_SCAN_ENABLED` | `true` | Scan comm content + activity payloads for PII |
 

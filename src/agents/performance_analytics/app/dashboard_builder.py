@@ -574,6 +574,13 @@ def compute_kpi(
 # ── Funnel ──────────────────────────────────────────────────────────────────
 
 
+def _in_period_or_skip(ts: datetime | None, period: str | None) -> bool:
+    """Fail-safe period check: missing timestamps do not pollute every period."""
+    if ts is None:
+        return False
+    return _in_period(ts, period)
+
+
 def build_funnel(filters: dict[str, Any] | None = None, period: str | None = None) -> dict[str, Any]:
     """Lead → app → approved → funded funnel with conversion and cycle times."""
     filters = filters or {}
@@ -587,7 +594,7 @@ def build_funnel(filters: dict[str, Any] | None = None, period: str | None = Non
             for d in deals.values()
             if _deal_filter_match(d, filters)
             and _deal_has_stage(d, stage)
-            and _in_period(_deal_stage_at(d, stage) or d["final_at"] or datetime.min.replace(tzinfo=UTC), period)
+            and _in_period_or_skip(_deal_stage_at(d, stage) or d["final_at"], period)
         ]
         cycle_days: list[float] = []
         if stage != "lead":
@@ -622,7 +629,7 @@ def build_rep_scorecards(filters: dict[str, Any] | None = None, period: str | No
     for d in deals.values():
         if not _deal_filter_match(d, filters):
             continue
-        if not _in_period(d["final_at"] or _max_touch_at(d["touches"]) or datetime.min.replace(tzinfo=UTC), period):
+        if not _in_period_or_skip(d["final_at"] or _max_touch_at(d["touches"]), period):
             continue
         rep = d["rep_id"] or "(none)"
         if rep not in by_rep:
@@ -727,9 +734,7 @@ def build_channel_effectiveness(
     filters = filters or {}
     breakdown = breakdown or ["channel"]
     touches = _filter_touches(filters)
-    if period and _parse_grain(period):
-        touches = [t for t in touches if _in_period(t.sent_at, period)]
-    elif period:
+    if period:
         touches = [t for t in touches if _in_period(t.sent_at, period)]
 
     deals = _deals_from_outcomes()
