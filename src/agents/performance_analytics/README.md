@@ -15,6 +15,11 @@ P0–P3 of the PAS ticket, plus the ROI Attribution and Channel Effectiveness su
 - **Export & Reporting**: CSV and PDF export for metrics, funnels, and channel reports; scheduled report entity (FR-014).
 - **A/B Uplift**: treatment vs control conversion lift with two-proportion z-test and p-value (FR-007).
 
+## Latest P4 Hardening
+
+- Bug-audit fixes: ISO-8601 reconciliation windows (`app/reconciliation.py` + `app/period_utils.py`), time-decay attribution uses the actual conversion `funded_at` (`app/attribution.py`), `typing.List` annotation fix, duplicate branch removal in `build_channel_effectiveness`, `_in_period_or_skip` for missing timestamps, and `threading.RLock()` on every in-memory repository.
+- `tests/test_bug_audit.py` adds 7 regression tests; the suite is now `42/42` passing.
+
 ## Architecture
 
 ```
@@ -353,7 +358,7 @@ The agent has an isolated pytest suite under `tests/`:
 
 ```bash
 cd src/agents/performance_analytics
-uv run pytest tests -q          # 23 passed, 1 warning
+uv run pytest tests -q          # 42 passed, 1 warning
 uv run pytest tests -v          # per-test verbose output
 ```
 

@@ -7,6 +7,7 @@ Engine-8 compliance audit. Schema-invalid inputs go to a dead-letter log (§8). 
 real Kafka bus + Temporal workflows are deferred infra behind this interface.
 """
 from datetime import UTC, datetime
+from threading import RLock
 
 import structlog
 
@@ -27,27 +28,37 @@ EVENT_SUPPRESSED = "contact.suppressed"
 
 _events: list[dict] = []
 _dlq: list[dict] = []
+_lock = RLock()
 
 
 def publish(event_type: str, payload: dict) -> None:
-    _events.append({"type": event_type, "payload": payload, "at": datetime.now(UTC).isoformat()})
+    with _lock:
+        _events.append({
+            "type": event_type,
+            "payload": payload,
+            "at": datetime.now(UTC).isoformat(),
+        })
     logger.info("event", event_type=event_type)
 
 
 def dead_letter(payload: dict, *, reason: str) -> None:
-    _dlq.append({"payload": payload, "reason": reason, "at": datetime.now(UTC).isoformat()})
+    with _lock:
+        _dlq.append({"payload": payload, "reason": reason, "at": datetime.now(UTC).isoformat()})
     logger.warning("dead_letter", reason=reason)
 
 
 def get_events(*, event_type: str | None = None, limit: int = 200) -> list[dict]:
-    items = [e for e in _events if event_type is None or e["type"] == event_type]
-    return list(reversed(items[-limit:]))
+    with _lock:
+        items = [e for e in _events if event_type is None or e["type"] == event_type]
+        return list(reversed(items[-limit:]))
 
 
 def get_dlq(*, limit: int = 200) -> list[dict]:
-    return list(reversed(_dlq[-limit:]))
+    with _lock:
+        return list(reversed(_dlq[-limit:]))
 
 
 def reset_events() -> None:
-    _events.clear()
-    _dlq.clear()
+    with _lock:
+        _events.clear()
+        _dlq.clear()

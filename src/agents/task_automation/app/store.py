@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -15,20 +16,26 @@ _tasks: dict[str, dict[str, Any]] = {}
 _audit: list[dict[str, Any]] = []
 _rules_hydrated = False
 
+_lock = RLock()
+
 
 def hydrate_rules_from_db() -> int:
     """Load rule registry from Postgres/SQLite into memory cache."""
     global _rules_hydrated
     from app.core.config import get_settings
 
-    if get_settings().storage_backend not in ("sqlite", "postgres"):
-        _rules_hydrated = True
-        return len(_rules)
+    settings = get_settings()
+    if settings.storage_backend not in ("sqlite", "postgres"):
+        with _lock:
+            _rules_hydrated = True
+            return len(_rules)
+
     loaded = fetch_all_rules()
-    for row in loaded:
-        _rules[row["rule_id"]] = row
-    _rules_hydrated = True
-    return len(loaded)
+    with _lock:
+        for row in loaded:
+            _rules[row["rule_id"]] = row
+        _rules_hydrated = True
+        return len(loaded)
 
 
 def _now() -> str:
@@ -72,7 +79,8 @@ def record_audit(
         "actor": actor,
         "recorded_at": _now(),
     }
-    _audit.append(row)
+    with _lock:
+        _audit.append(row)
     return row
 
 
@@ -86,7 +94,8 @@ def create_rule(data: dict[str, Any]) -> dict[str, Any]:
         "updated_at": _now(),
         **data,
     }
-    _rules[rule_id] = row
+    with _lock:
+        _rules[rule_id] = row
     persist_rule(row)
     version = str(row.get("version") or "1")
     redis_store.cache_rule_version(rule_id, version, row)
@@ -95,27 +104,35 @@ def create_rule(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_rules(*, active_only: bool = False) -> list[dict[str, Any]]:
-    rows = list(_rules.values())
+    with _lock:
+        rows = list(_rules.values())
     if active_only:
         rows = [r for r in rows if r.get("active", True)]
     return sorted(rows, key=lambda r: r["created_at"])
 
 
 def get_rule(rule_id: str) -> dict[str, Any] | None:
-    if not _rules_hydrated:
+    with _lock:
+        rules_hydrated = _rules_hydrated
+    if not rules_hydrated:
         hydrate_rules_from_db()
-    row = _rules.get(rule_id)
-    if row:
-        return row
+
+    with _lock:
+        row = _rules.get(rule_id)
+        if row:
+            return row
+
     cached = redis_store.get_cached_rule(rule_id)
     if cached:
-        _rules[rule_id] = cached
+        with _lock:
+            _rules[rule_id] = cached
         return cached
     return None
 
 
 def get_rule_cached(rule_id: str, version: str | None = None) -> dict[str, Any] | None:
-    row = _rules.get(rule_id)
+    with _lock:
+        row = _rules.get(rule_id)
     if not row:
         return None
     ver = version or str(row.get("version") or "1")
@@ -124,14 +141,19 @@ def get_rule_cached(rule_id: str, version: str | None = None) -> dict[str, Any] 
 
 
 def update_rule(rule_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
-    if not _rules_hydrated:
+    with _lock:
+        rules_hydrated = _rules_hydrated
+    if not rules_hydrated:
         hydrate_rules_from_db()
-    row = _rules.get(rule_id)
-    if not row:
-        return None
-    row.update({k: v for k, v in patch.items() if v is not None})
-    row["updated_at"] = _now()
-    version = str(row.get("version") or "1")
+
+    with _lock:
+        row = _rules.get(rule_id)
+        if not row:
+            return None
+        row.update({k: v for k, v in patch.items() if v is not None})
+        row["updated_at"] = _now()
+        version = str(row.get("version") or "1")
+
     persist_rule(row)
     redis_store.cache_rule_version(rule_id, version, row)
     redis_store.invalidate_rule_cache(rule_id)
@@ -140,7 +162,8 @@ def update_rule(rule_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def delete_rule(rule_id: str) -> bool:
-    return _rules.pop(rule_id, None) is not None
+    with _lock:
+        return _rules.pop(rule_id, None) is not None
 
 
 def rules_for_event(
@@ -152,14 +175,18 @@ def rules_for_event(
 ) -> list[dict[str, Any]]:
     from app.core.config import get_settings
 
-    if get_settings().storage_backend in ("sqlite", "postgres"):
+    settings = get_settings()
+    if settings.storage_backend in ("sqlite", "postgres"):
         rows = fetch_rules_for_event(
             trigger_event, include_draft=include_draft, tenant_id=tenant_id,
         )
-        for row in rows:
-            _rules[row["rule_id"]] = row
+        with _lock:
+            for row in rows:
+                _rules[row["rule_id"]] = row
     else:
-        if not _rules_hydrated:
+        with _lock:
+            rules_hydrated = _rules_hydrated
+        if not rules_hydrated:
             hydrate_rules_from_db()
 
         def _matches(r: dict[str, Any]) -> bool:
@@ -168,7 +195,10 @@ def rules_for_event(
                 return trigger_event in event_types
             return r.get("trigger_event") == trigger_event
 
-        rows = [r for r in _rules.values() if _matches(r) and r.get("active", True)]
+        with _lock:
+            all_rules = list(_rules.values())
+
+        rows = [r for r in all_rules if _matches(r) and r.get("active", True)]
         if not include_draft:
             rows = [r for r in rows if r.get("rollout_status", "active") in ("active", "canary")]
         if tenant_id:
@@ -183,12 +213,13 @@ def rules_for_event(
 
 
 def record_dry_run(rule_id: str, *, passed: bool) -> dict[str, Any] | None:
-    row = _rules.get(rule_id)
-    if not row:
-        return None
-    row["dry_run_passed"] = passed
-    row["dry_run_at"] = _now()
-    return row
+    with _lock:
+        row = _rules.get(rule_id)
+        if not row:
+            return None
+        row["dry_run_passed"] = passed
+        row["dry_run_at"] = _now()
+        return row
 
 
 # ── CRM Tasks ─────────────────────────────────────────────────────────────────
@@ -228,7 +259,8 @@ def create_crm_task(
         "outcome_notes": None,
         "outcome": None,
     }
-    _tasks[task_id] = row
+    with _lock:
+        _tasks[task_id] = row
     record_audit(
         lead_id=lead_id,
         action="task.created",
@@ -239,7 +271,8 @@ def create_crm_task(
 
 
 def get_task(task_id: str) -> dict[str, Any] | None:
-    row = _tasks.get(task_id)
+    with _lock:
+        row = _tasks.get(task_id)
     return _enrich_task(row) if row else None
 
 
@@ -250,7 +283,9 @@ def list_tasks(
     status: str | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
-    rows = [_enrich_task(t) for t in _tasks.values()]
+    with _lock:
+        rows = list(_tasks.values())
+    rows = [_enrich_task(t) for t in rows]
     if assignee_id:
         rows = [r for r in rows if r.get("assignee_id") == assignee_id]
     if lead_id:
@@ -268,14 +303,15 @@ def complete_task(
     outcome: str | None = None,
     actor: str | None = None,
 ) -> dict[str, Any] | None:
-    row = _tasks.get(task_id)
-    if not row:
-        return None
-    row["status"] = TaskStatus.COMPLETED
-    row["completed_at"] = _now()
-    row["updated_at"] = row["completed_at"]
-    row["outcome_notes"] = outcome_notes
-    row["outcome"] = outcome
+    with _lock:
+        row = _tasks.get(task_id)
+        if not row:
+            return None
+        row["status"] = TaskStatus.COMPLETED
+        row["completed_at"] = _now()
+        row["updated_at"] = row["completed_at"]
+        row["outcome_notes"] = outcome_notes
+        row["outcome"] = outcome
     record_audit(
         lead_id=row["lead_id"],
         action="task.completed",
@@ -286,21 +322,26 @@ def complete_task(
 
 
 def all_tasks_raw() -> list[dict[str, Any]]:
-    return list(_tasks.values())
+    with _lock:
+        return list(_tasks.values())
 
 
 def audit_for_lead(lead_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
-    rows = [a for a in _audit if a.get("lead_id") == lead_id]
+    with _lock:
+        rows = [a for a in _audit if a.get("lead_id") == lead_id]
     return sorted(rows, key=lambda r: r["recorded_at"], reverse=True)[:limit]
 
 
 def all_audit(*, limit: int = 200) -> list[dict[str, Any]]:
-    return sorted(_audit, key=lambda r: r["recorded_at"], reverse=True)[:limit]
+    with _lock:
+        rows = list(_audit)
+    return sorted(rows, key=lambda r: r["recorded_at"], reverse=True)[:limit]
 
 
 def reset_store() -> None:
     global _rules_hydrated
-    _rules.clear()
-    _tasks.clear()
-    _audit.clear()
-    _rules_hydrated = False
+    with _lock:
+        _rules.clear()
+        _tasks.clear()
+        _audit.clear()
+        _rules_hydrated = False

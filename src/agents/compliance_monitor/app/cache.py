@@ -7,10 +7,12 @@ cache miss simply falls through to the durable repository, so correctness never 
 """
 import json
 import time
+from threading import RLock
 
 from app.core.config import get_settings
 from app.domain.models import Consent
 
+_lock = RLock()
 _mem: dict[str, tuple[float, str]] = {}   # key → (expires_at, json)
 _redis = None
 _redis_url: str | None = None
@@ -26,15 +28,25 @@ def _client():
     settings = get_settings()
     if not settings.uses_cache:
         return None
-    if _redis is None or _redis_url != settings.redis_url:
-        try:
-            import redis
-            _redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-            _redis.ping()
+
+    with _lock:
+        if _redis is not None and _redis_url == settings.redis_url:
+            return _redis
+
+    try:
+        import redis as redis_lib
+        client = redis_lib.Redis.from_url(settings.redis_url, decode_responses=True)
+        client.ping()
+    except Exception:  # noqa: BLE001 — broker/lib unavailable → memory fallback
+        client = None
+
+    with _lock:
+        if client is not None:
+            _redis = client
             _redis_url = settings.redis_url
-        except Exception:  # noqa: BLE001 — broker/lib unavailable → memory fallback
+        else:
             _redis = None
-    return _redis
+        return _redis
 
 
 def get(lead_id: str, channel: str) -> Consent | None:
@@ -43,10 +55,11 @@ def get(lead_id: str, channel: str) -> Consent | None:
     if client is not None:
         raw = client.get(key)
         return Consent(**json.loads(raw)) if raw else None
-    hit = _mem.get(key)
-    if hit and hit[0] > time.time():
-        return Consent(**json.loads(hit[1]))
-    _mem.pop(key, None)
+    with _lock:
+        hit = _mem.get(key)
+        if hit and hit[0] > time.time():
+            return Consent(**json.loads(hit[1]))
+        _mem.pop(key, None)
     return None
 
 
@@ -57,7 +70,7 @@ def set(consent: Consent) -> None:  # noqa: A001 — cache verb, not the builtin
     client = _client()
     if client is not None:
         client.set(key, raw, ex=ttl)
-    else:
+    with _lock:
         _mem[key] = (time.time() + ttl, raw)
 
 
@@ -66,10 +79,12 @@ def invalidate(lead_id: str, channel: str) -> None:
     client = _client()
     if client is not None:
         client.delete(key)
-    _mem.pop(key, None)
+    with _lock:
+        _mem.pop(key, None)
 
 
 def reset() -> None:
     global _redis, _redis_url
-    _mem.clear()
-    _redis, _redis_url = None, None
+    with _lock:
+        _mem.clear()
+        _redis, _redis_url = None, None

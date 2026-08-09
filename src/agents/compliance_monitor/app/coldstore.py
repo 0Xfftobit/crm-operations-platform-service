@@ -11,6 +11,7 @@ class), selected by ``COLD_STORE_GATEWAY``; ``none`` disables archiving (and the
 """
 import json
 import os
+from threading import RLock
 
 from app.core.config import Settings, get_settings
 from app.domain.models import AuditEntry
@@ -116,6 +117,7 @@ class S3ColdStore:
         return None
 
 
+_lock = RLock()
 _store = None
 _sig: tuple | None = None
 
@@ -123,15 +125,16 @@ _sig: tuple | None = None
 def _get_store(settings: Settings):
     global _store, _sig
     sig = (settings.cold_store_gateway, settings.cold_store_dir, settings.cold_store_s3_bucket)
-    if sig != _sig:
-        _sig = sig
-        if settings.cold_store_gateway == "local":
-            _store = LocalColdStore(settings.cold_store_dir)
-        elif settings.cold_store_gateway == "s3":
-            _store = S3ColdStore(settings.cold_store_s3_bucket, settings.cold_store_s3_prefix)
-        else:
-            _store = None
-    return _store
+    with _lock:
+        if sig != _sig:
+            _sig = sig
+            if settings.cold_store_gateway == "local":
+                _store = LocalColdStore(settings.cold_store_dir)
+            elif settings.cold_store_gateway == "s3":
+                _store = S3ColdStore(settings.cold_store_s3_bucket, settings.cold_store_s3_prefix)
+            else:
+                _store = None
+        return _store
 
 
 def enabled() -> bool:
@@ -155,4 +158,5 @@ def fetch(seq: int) -> dict | None:
 
 def reset() -> None:
     global _store, _sig
-    _store, _sig = None, None
+    with _lock:
+        _store, _sig = None, None

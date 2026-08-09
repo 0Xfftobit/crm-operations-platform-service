@@ -14,6 +14,7 @@ import json
 import os
 import stat
 from datetime import UTC, datetime, timedelta
+from threading import RLock
 
 from app.core.config import Settings, get_settings
 from app.domain.models import AuditEntry
@@ -82,6 +83,7 @@ class S3WormStore:
             return None
 
 
+_lock = RLock()
 _store = None
 _store_sig: tuple | None = None
 
@@ -90,16 +92,17 @@ def _get_store(settings: Settings):
     """Build (and cache) the configured store; None when disabled."""
     global _store, _store_sig
     sig = (settings.worm_gateway, settings.worm_local_dir, settings.worm_s3_bucket)
-    if sig != _store_sig:
-        _store_sig = sig
-        if settings.worm_gateway == "local":
-            _store = LocalWormStore(settings.worm_local_dir)
-        elif settings.worm_gateway == "s3":
-            _store = S3WormStore(settings.worm_s3_bucket, settings.worm_s3_prefix,
-                                 settings.worm_s3_retention_days)
-        else:
-            _store = None
-    return _store
+    with _lock:
+        if sig != _store_sig:
+            _store_sig = sig
+            if settings.worm_gateway == "local":
+                _store = LocalWormStore(settings.worm_local_dir)
+            elif settings.worm_gateway == "s3":
+                _store = S3WormStore(settings.worm_s3_bucket, settings.worm_s3_prefix,
+                                     settings.worm_s3_retention_days)
+            else:
+                _store = None
+        return _store
 
 
 def enabled() -> bool:
@@ -121,4 +124,5 @@ def fetch(seq: int) -> dict | None:
 def reset() -> None:
     """Drop the cached store (tests switching backends)."""
     global _store, _store_sig
-    _store, _store_sig = None, None
+    with _lock:
+        _store, _store_sig = None, None

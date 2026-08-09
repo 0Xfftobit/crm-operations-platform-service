@@ -17,6 +17,11 @@ Three integrated sub-systems (memory-backed; Postgres/Redis/Kafka tiers wire in 
 - **Audit Trail** — append-only hash-chained ledger, search/filter, on-demand + periodic tamper
   verification, RBAC **CSV / JSON / PDF** export, 7-year retention.
 
+## Latest P4 Hardening
+
+- Bug-audit fixes: `coverage_sweep_interval_min`, `http_source.poll_once` non-numeric handling, `CaseUpdate.status`/`service._raise` `Literal`/typed, exact-year retention, float `days_left`, `coldstore.py` `encoding="utf-8"` and S3 range pagination.
+- In-memory repositories and shared state are protected with `threading.RLock()`.
+
 > The protected attributes used by the disparity monitor are for **monitoring only** — never a
 > decision input (BR-2). Every state-changing path is written to the immutable ledger first.
 
@@ -57,7 +62,7 @@ below is required to run or test the domain.
 ## Run locally
 ```bash
 uv sync                 # create .venv + install
-uv run pytest -q        # tests
+uv run pytest -q        # 109 passed, 1 warning
 make run                # API on http://127.0.0.1:8004 (reload)
 ```
 Open **http://127.0.0.1:8004/docs** for the interactive API. Health: `/api/v1/health`,

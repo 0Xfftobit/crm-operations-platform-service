@@ -42,7 +42,7 @@ def retention_state(rec: RetentionRecord, *, settings: Settings, now: datetime) 
     """{state, days_left}: anonymized | due (past deadline) | warning | ok."""
     if rec.anonymized or rec.erased:
         return {"state": "anonymized", "days_left": None}
-    days_left = (rec.retained_until - now).days
+    days_left = (rec.retained_until - now).total_seconds() / 86400
     if now >= rec.retained_until:
         return {"state": "due", "days_left": days_left}
     if days_left <= settings.retention_warn_days:

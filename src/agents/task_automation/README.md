@@ -111,9 +111,15 @@ During development, mock events via `POST /events/ingest`.
 ## Tests
 
 ```bash
-uv run pytest tests/ -q
+uv run pytest tests/ -q          # 78 passed, 1 skipped
 uv run ruff check app tests
 ```
+
+## Latest P4 Hardening
+
+- Bug-audit fixes: `doc_request_chain.complete_verification` defaults to `verified=False`; `POST /events/document-received` validates `workflow_id` and rejects non-string ids; `normalize_trigger`, `run_pipeline_stages`, `process_event`, and `_persist_and_emit` assert `trigger_id` is a `str`.
+- In-memory global state is now protected by `threading.RLock()` across `app/store.py`, `app/runs.py`, `app/ledger.py`, `app/events.py`, `app/event_history.py`, `app/dlq.py`, `app/metrics.py`, `app/guards.py`, `app/escalation.py`, `app/cron_triggers.py`, `app/kafka_consumer.py`, `app/kafka_consumer_group.py`, `app/messaging/kafka_bus.py`, `app/messaging/trigger_ingestor.py`, `app/integrations/temporal.py`, `app/integrations/activity_runner.py`, `app/integrations/feature_store.py`, `app/workflows/doc_request_chain.py`, `app/tracing.py`, `app/agents/llm_task_agent.py`, `app/persistence/memory_store.py`, and `app/persistence/redis_store.py`.
+- `tests/test_bug_audit.py` adds 6 regression tests.
 
 ## System Architecture
 

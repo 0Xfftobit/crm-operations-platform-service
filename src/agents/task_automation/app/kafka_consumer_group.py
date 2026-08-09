@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import threading
+from threading import RLock
 from typing import Any
 
 from app.core.config import get_settings
@@ -16,14 +17,18 @@ _consumer_thread: threading.Thread | None = None
 _stop_event = threading.Event()
 _stats: dict[str, Any] = {"running": False, "messages_processed": 0, "errors": 0}
 
+_lock = RLock()
+
 
 def reset_kafka_consumer() -> None:
     stop_kafka_consumer()
-    _stats.update({"running": False, "messages_processed": 0, "errors": 0})
+    with _lock:
+        _stats.update({"running": False, "messages_processed": 0, "errors": 0})
 
 
 def consumer_stats() -> dict[str, Any]:
-    return dict(_stats)
+    with _lock:
+        return dict(_stats)
 
 
 def _process_record(topic: str, payload: dict[str, Any], *, offset: int, partition: int) -> None:
@@ -36,7 +41,8 @@ def _process_record(topic: str, payload: dict[str, Any], *, offset: int, partiti
         trigger_id=trigger_id,
         source="kafka",
     )
-    _stats["messages_processed"] += 1
+    with _lock:
+        _stats["messages_processed"] += 1
 
 
 def _consumer_loop() -> None:
@@ -55,7 +61,8 @@ def _consumer_loop() -> None:
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
     )
     consumer.subscribe(list(settings.kafka_topics))
-    _stats["running"] = True
+    with _lock:
+        _stats["running"] = True
     logger.info(
         "kafka_consumer_started",
         extra={"bootstrap": settings.kafka_bootstrap_servers, "group": settings.kafka_consumer_group},
@@ -76,11 +83,13 @@ def _consumer_loop() -> None:
                             partition=record.partition,
                         )
                     except Exception as exc:
-                        _stats["errors"] += 1
+                        with _lock:
+                            _stats["errors"] += 1
                         logger.exception("kafka_message_failed", extra={"error": str(exc)})
     finally:
         consumer.close()
-        _stats["running"] = False
+        with _lock:
+            _stats["running"] = False
 
 
 def start_kafka_consumer() -> dict[str, Any]:

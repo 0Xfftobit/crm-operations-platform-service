@@ -70,6 +70,25 @@ def test_retention_sweep_warns_then_anonymizes():
     assert get_retention_repository().get("due").anonymized is True
 
 
+def test_retention_days_left_is_fractional():
+    now = datetime.now(UTC)
+    repo = get_retention_repository()
+    repo.put(RetentionRecord(lead_id="half_day", retained_until=now + timedelta(hours=12)))
+    states = {s["lead_id"]: s for s in service.check_retention()}
+    assert states["half_day"]["state"] == "warning"
+    assert 0.4 < states["half_day"]["days_left"] < 0.6
+
+
+def test_add_years_respects_leap_day():
+    from app import privacy
+    leap = datetime(2024, 2, 29, tzinfo=UTC)
+    # Feb 29 cannot exist in 2023 or 2025, so it rolls to Mar 1.
+    assert privacy._add_years(leap, -1) == datetime(2023, 3, 1, tzinfo=UTC)
+    assert privacy._add_years(leap, 1) == datetime(2025, 3, 1, tzinfo=UTC)
+    normal = datetime(2023, 3, 1, tzinfo=UTC)
+    assert privacy._add_years(normal, 1) == datetime(2024, 3, 1, tzinfo=UTC)
+
+
 def test_right_to_erasure_anonymizes_consent():
     get_consent_repository().put(Consent(lead_id="lead_9", channel="email", opted_in=True))
     rec = service.erase_lead("lead_9")

@@ -177,10 +177,11 @@ This P4 pass added the following production hardening pieces without breaking P0
 2. **Environment variables**: `OUTCOME_FANOUT_ENABLED`, `FEEDBACK_LOOP_URL`, `FEEDBACK_LOOP_API_KEY`, `FEEDBACK_LOOP_TIMEOUT` added to `.env.example` and `app/core/config.py`.
 3. **Request-id propagation in cross-agent calls**: `app/clients/feedback_client.py` now sends an `X-Request-ID` header on every FLS fan-out request (`app/clients/feedback_client.py:38`).
 
-4. **Bug-audit fixes**: `reconciliation._period_grain` now parses ISO-8601 durations and daily/weekly/monthly/quarterly/yearly bucket keywords with regex (`app/reconciliation.py:34-49`); `dashboard_builder` added `_in_period_or_skip` so funnels and scorecards do not include records with missing timestamps in every period (`app/dashboard_builder.py:577-581`); `attribution._time_decay` no longer references an undefined `funded_at` and uses the last touch in the path (`app/attribution.py:74-87`); `AttributionRepository._items` is typed as `dict[tuple[str, str], AttributionRecord]` (`app/repositories.py:175`); and the duplicate branch in `build_channel_effectiveness` was removed (`app/dashboard_builder.py:728-769`).
+4. **Bug-audit / P4 hardening**: `reconciliation._funded_amount_for_period` now uses `period_utils._in_period` with explicit `now`, so ISO-8601 durations such as `P1D`/`P7D`/`P1M` are evaluated as rolling windows and bucket strings are matched by bounds instead of by string equality (`app/reconciliation.py:24-36`); `_parse_bounds` handles ISO-8601 durations (`app/period_utils.py:48-88`); `attribution._time_decay` accepts and uses the actual conversion `funded_at` when available (`app/attribution.py:74-87`, `app/attribution.py:198-211`); `AttributionRepository._items` is typed as `dict[tuple[str, str], AttributionRecord]` (`app/repositories.py:212`); duplicate branches in `build_channel_effectiveness` were removed; `dashboard_builder` funnels/scorecards skip records with missing timestamps via `_in_period_or_skip` (`app/dashboard_builder.py:577-581`); repository `list` method type-annotation shadowing fixed by using `typing.List` (`app/repositories.py`); every in-memory repository now uses `threading.RLock()` via `_synchronized`.
 5. **Default-dev-key rejection**: `app/core/config.py` now raises `ValueError` if `API_KEY=change-me-dev-key` and `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway.
 6. **Docker-compose cross-agent wiring**: `docker-compose.yml` sets `FEEDBACK_LOOP_URL=http://feedback_loop:8000` and `OUTCOME_FANOUT_ENABLED=true` for PAS by default.
 7. **Cross-agent client tests**: `tests/test_cross_agent.py` mocks `httpx.Client` and verifies PAS→FLS `outcome` fan-out calls the right endpoint with `X-API-Key` and `X-Request-ID`.
+8. **Bug-audit tests**: `tests/test_bug_audit.py` adds 7 regression tests covering ISO-8601 reconciliation windows, `_in_period` ISO support, time-decay conversion reference, attribution repository tuple keys, and concurrent repository safety; the suite is now `42/42` tests passing.
 
 Items still deferred:
 - Real-time Kafka streaming consumer.
@@ -252,7 +253,8 @@ src/agents/performance_analytics/
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py             # FastAPI TestClient fixture + payload helpers
-│   └── test_performance_analytics.py  # 34 tests covering P0-P3 + subtasks
+│   ├── test_bug_audit.py       # 7 regression tests covering bug-audit fixes
+│   └── test_performance_analytics.py  # 35 P0-P3 + subtask tests (42 total)
 ├── pyproject.toml              # deps + ruff + pytest config
 ├── uv.lock                     # frozen dependency set
 ├── Dockerfile

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from threading import RLock
 from typing import Any
 
 import httpx
@@ -13,13 +14,17 @@ logger = logging.getLogger(__name__)
 # Stub feature catalog keyed by lead/deal
 _feature_cache: dict[str, dict[str, Any]] = {}
 
+_lock = RLock()
+
 
 def reset_feature_store() -> None:
-    _feature_cache.clear()
+    with _lock:
+        _feature_cache.clear()
 
 
 def seed_features(deal_id: str, features: dict[str, Any]) -> None:
-    _feature_cache[deal_id] = features
+    with _lock:
+        _feature_cache[deal_id] = features
 
 
 def _headers() -> dict[str, str]:
@@ -40,7 +45,8 @@ def fetch_features(
     """Resolve features from Feature Store HTTP service when configured, else stub + inline context."""
     settings = get_settings()
     key = deal_id or lead_id or "unknown"
-    cached = dict(_feature_cache.get(key, {}))
+    with _lock:
+        cached = dict(_feature_cache.get(key, {}))
 
     if settings.feature_store_url:
         try:
@@ -73,4 +79,5 @@ def fetch_features(
 
 
 def store_stats() -> dict[str, Any]:
-    return {"cached_entities": len(_feature_cache), "backend": "in_process_feature_store"}
+    with _lock:
+        return {"cached_entities": len(_feature_cache), "backend": "in_process_feature_store"}

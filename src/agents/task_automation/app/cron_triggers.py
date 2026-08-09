@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -10,10 +11,13 @@ from app.service import process_event
 _schedules: dict[str, dict[str, Any]] = {}
 _fired: list[dict[str, Any]] = []
 
+_lock = RLock()
+
 
 def reset_cron() -> None:
-    _schedules.clear()
-    _fired.clear()
+    with _lock:
+        _schedules.clear()
+        _fired.clear()
 
 
 def register_schedule(
@@ -34,20 +38,25 @@ def register_schedule(
         "active": active,
         "created_at": datetime.now(UTC).isoformat(),
     }
-    _schedules[schedule_id] = row
+    with _lock:
+        _schedules[schedule_id] = row
     return row
 
 
 def list_schedules() -> list[dict[str, Any]]:
-    return list(_schedules.values())
+    with _lock:
+        return list(_schedules.values())
 
 
 def fire_schedule(schedule_id: str, *, payload_override: dict[str, Any] | None = None) -> dict[str, Any]:
-    sched = _schedules.get(schedule_id)
-    if not sched:
-        return {"error": "schedule_not_found"}
-    if not sched.get("active", True):
-        return {"error": "schedule_inactive"}
+    with _lock:
+        sched = _schedules.get(schedule_id)
+        if not sched:
+            return {"error": "schedule_not_found"}
+        if not sched.get("active", True):
+            return {"error": "schedule_inactive"}
+        sched = dict(sched)
+
     trigger_id = f"sched_{schedule_id}_{uuid4().hex[:8]}"
     payload = {**sched.get("payload_template", {}), **(payload_override or {}), "trigger_id": trigger_id}
     result = process_event(
@@ -62,9 +71,11 @@ def fire_schedule(schedule_id: str, *, payload_override: dict[str, Any] | None =
         "fired_at": datetime.now(UTC).isoformat(),
         "result_summary": {"latency_ms": result.get("latency_ms"), "actions": len(result.get("created") or [])},
     }
-    _fired.append(fired)
+    with _lock:
+        _fired.append(fired)
     return {"schedule": sched, "execution": result, "fired": fired}
 
 
 def list_fired(*, limit: int = 50) -> list[dict[str, Any]]:
-    return list(reversed(_fired[-limit:]))
+    with _lock:
+        return list(reversed(_fired[-limit:]))

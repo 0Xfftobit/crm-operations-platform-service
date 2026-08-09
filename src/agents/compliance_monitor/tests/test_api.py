@@ -40,3 +40,19 @@ def test_rule_workflow_over_http(client, api_headers):
 def test_dashboard_and_verify(client):
     assert client.get("/api/v1/dashboard").json()["overall"] == "green"
     assert client.get("/api/v1/audit/verify").json()["verified"] is True
+
+
+def test_case_status_is_validated(client, api_headers):
+    client.post("/api/v1/activity", headers=api_headers, json={
+        "event_type": "decision", "actor_type": "engine", "engine": "lead-scoring",
+        "entity_id": "l1"})
+    cases = client.get("/api/v1/cases", headers=api_headers).json()["cases"]
+    assert cases
+    case_id = cases[0]["case_id"]
+    bad = client.patch(f"/api/v1/cases/{case_id}", headers=api_headers,
+                       json={"status": "invalid"})
+    assert bad.status_code == 422
+    ok = client.patch(f"/api/v1/cases/{case_id}", headers=api_headers,
+                      json={"status": "investigating"})
+    assert ok.status_code == 200
+    assert ok.json()["status"] == "investigating"

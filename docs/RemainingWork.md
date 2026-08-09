@@ -21,8 +21,8 @@ The following items were implemented or wired during the latest P4 pass. They ar
 - [x] **Root integration tests** in `tests/integration/test_gateway.py`.
 - [x] **All engine test suites and lint checks pass** (see `docs/ENGINE_TESTING_RESULTS.md`).
 - [x] **FUS bug-audit fixes**: per-sequence frequency caps, Twilio/SendGrid/WhatsApp Business providers with mock fallback, 5-minute pre-send idempotency guard, `Literal` state validation, `Field(default_factory=dict)` for mutable defaults.
-- [x] **TAS bug-audit fixes**: HTTP fallback CRM/calendar/feature-store clients, `verify_documents_activity` default `False`, `/events/document-received` workflow-id validation.
-- [x] **PAS bug-audit fixes**: `_period_grain` regex, `_in_period_or_skip`, `attribution._time_decay` `funded_at` fix, `AttributionRepository` key typing, duplicate branch removal in `build_channel_effectiveness`.
+- [x] **TAS bug-audit fixes**: `verify_documents_activity` / `doc_request_chain.complete_verification` default to `verified=False`; `/events/document-received` validates `workflow_id` and rejects non-string ids; `normalize_trigger` asserts and stringifies `trigger_id`; `run_pipeline_stages`, `process_event`, and `_persist_and_emit` assert `trigger_id` is `str`; all TAS in-memory globals (store, runs, ledger, events, DLQ, metrics, guards, escalation, cron, kafka consumers, messaging, integrations, workflows, tracing, LLM agent, `MemoryStore`, `redis_store`) wrapped with `threading.RLock()`.
+- [x] **PAS bug-audit fixes**: `reconciliation._funded_amount_for_period` uses `period_utils._in_period` with explicit `now` so ISO-8601 durations (e.g. `P1D`, `P7D`, `P1M`) are evaluated as rolling windows; `_in_period_or_skip` skips missing timestamps; `attribution._time_decay` accepts and uses the actual conversion `funded_at`; `AttributionRepository` uses tuple keys; `build_channel_effectiveness` duplicate branches removed; `list` return-type shadowing fixed with `typing.List`; all in-memory repositories wrapped with `threading.RLock()`.
 - [x] **CMS bug-audit fixes**: `coverage_sweep_interval_min`, `http_source.poll_once` non-numeric handling, `CaseUpdate.status`/`service._raise` `Literal`/typed, exact-year retention, `days_left` float, `coldstore.py` `encoding="utf-8"` and S3 range pagination.
 - [x] **FLS bug-audit fixes**: `drift.py` `timedelta` import, `model_retrainer.py` `joblib` serialization with in-memory artifact storage.
 - [x] **FUS latest P4 hardening**: `SuppressionEvent` + `POST /api/v1/webhooks/suppression`, `Contact.suppressed`/`suppressed_reason`/`owner_id`, `guardrails.check` suppression stops, `service.apply_suppression` with `contact.suppressed` events, `notifications.notify_owner_of_reply` with HTTP-to-in-process-log fallback, `threading.RLock()` in `app/repositories.py`, `X-Request-ID` in `app/clients/compliance_client.py`, and `NOTIFICATION_SERVICE_URL`/`NOTIFICATION_API_KEY`/`INTEGRATION_TIMEOUT_S` in `.env.example` and `app/core/config.py`.
@@ -124,7 +124,7 @@ These affect every engine and the gateway.
 - [x] Fix coverage sweep interval in `app/main.py` (now uses `coverage_sweep_interval_min`; `app/core/config.py` adds the field).
 - [x] Harden `app/http_source.py` against non-numeric `source_seq` and cursor.
 - [x] Tighten `CaseUpdate.status` to `Literal["open", "investigating", "remediated", "closed"]` and `service._raise` to `Domain`/`Severity` types.
-- [ ] Add locking around global in-memory stores (`audit.py`, `cache.py`, `coverage.py`, `events.py`, `kafka_bus.py`, `worm.py`, `coldstore.py`).
+- [x] Add locking around global in-memory stores (`audit.py`, `cache.py`, `coverage.py`, `events.py`, `kafka_bus.py`, `worm.py`, `coldstore.py`, `casework.py` dedup, and in-memory `app/repositories.py`).
 - [x] Use exact-year retention with leap-year handling and float `days_left` from total seconds for disclosure/retention timers.
 - [x] Use explicit `encoding="utf-8"` in `app/coldstore.py`.
 - [x] Combine S3 cold-store pagination passes.
@@ -161,13 +161,13 @@ These affect every engine and the gateway.
 
 ### Code-quality / bug-audit items
 
-- [ ] Fix A/B traffic split rounding so variants sum to exactly 100%.
-- [ ] Fix A/B guardrail fallback metric comparison.
-- [x] Use exact `timedelta` comparison in drift window.
-- [x] Replace `pickle` model/dataset serialization with `joblib`.
-- [ ] Fix `_precision_recall_f1` return type annotation.
-- [ ] Replace MD5 variant hash with SHA-256.
-- [ ] Add locks around global in-memory repositories.
+- [x] Fix A/B traffic split rounding so variants sum to exactly 100% (`app/abtest.py:72-82`).
+- [x] Fix A/B guardrail fallback metric comparison (`app/abtest.py:230-239`).
+- [x] Use exact `timedelta` comparison in drift window (`app/drift.py:86-91`).
+- [x] Replace `pickle` model/dataset serialization with `joblib` (`app/model_retrainer.py:216-218,271`).
+- [x] Fix `_precision_recall_f1` return type annotation (`app/aggregator.py:50-66`).
+- [x] Replace MD5 variant hash with SHA-256 (`app/abtest.py:20-21`).
+- [x] Add locks around global in-memory repositories and drift reference state (`app/repositories.py`, `app/drift.py`).
 
 *Sources:* `docs/BUG_AUDIT_REPORT.md` §2.
 
@@ -205,7 +205,7 @@ These affect every engine and the gateway.
 - [x] Timezone-normalize frequency-cap day/week keys to UTC.
 - [x] Validate `StateRequest.state` as `Literal`.
 - [x] Use `Field(default_factory=dict)` for mutable Pydantic defaults.
-- [x] Add locks around global in-memory state. **Done:** `app/repositories.py` uses per-instance `threading.RLock()` via `_synchronized` (`app/repositories.py:23-29`); `events.py`/`providers.py` in-process logs remain single-threaded in dev/CI and are protected by the repository locks where they touch state.
+- [x] Add locks around global in-memory state. **Done:** `app/repositories.py` uses per-instance `threading.RLock()` via `_synchronized` (`app/repositories.py:23-29`); `app/events.py`, `app/notifications.py`, `app/providers.py`, and `app/frequency.FrequencyStore` now use module-level `threading.RLock()` to protect their in-process logs, provider registry, mock send log, and frequency counters (`app/events.py:31-59`, `app/notifications.py:19-82`, `app/providers.py:25-175`, `app/frequency.py:39-91,187-204`).
 - [x] Add idempotent pre-send dedupe guard against redelivery.
 
 *Sources:* `docs/BUG_AUDIT_REPORT.md` §3; `docs/implementation_status_fus.md` §3.

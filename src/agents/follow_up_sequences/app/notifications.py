@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Any
 
 import httpx
@@ -15,10 +16,12 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 _log: list[dict[str, Any]] = []
+_lock = RLock()
 
 
 def reset() -> None:
-    _log.clear()
+    with _lock:
+        _log.clear()
 
 
 def _headers() -> dict[str, str]:
@@ -69,9 +72,11 @@ def notify_owner_of_reply(contact_id: str, owner_id: str, *, enrollment_id: str,
         except Exception as exc:  # noqa: BLE001
             logger.warning("notify_owner_error", error=str(exc))
 
-    _log.append(payload)
+    with _lock:
+        _log.append(payload)
     return {"notified": bool(owner_id), "provider": "notification_log", "payload": payload}
 
 
 def notification_log() -> list[dict[str, Any]]:
-    return list(_log)
+    with _lock:
+        return list(_log)

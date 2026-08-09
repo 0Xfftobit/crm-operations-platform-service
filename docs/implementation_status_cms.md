@@ -30,7 +30,7 @@ This document tracks what has been implemented against the CMS ticket (`docs/tic
 | **CEAAPSS-655** | System Design | ✅ | Data models, schemas, API specification, hash-chain/Merkle design, and lifecycle workflows implemented |
 | **P4 / P5 / GA** | Integration / Hardening / Launch | 📝 | Engine-8 central correlation, scheduled batch analytics, production streaming, S3 WORM/Object Lock, cold-storage automation, BI dashboard, RBAC/SSO, SOC 2 runbooks, load/latency hardening |
 
-Test coverage: **106/106 unit and functional tests pass** in `src/agents/compliance_monitor/tests/`.
+Test coverage: **109/109 unit and functional tests pass** in `src/agents/compliance_monitor/tests/`.
 
 ## 3. Functional Requirements (FR-001..FR-020)
 
@@ -186,7 +186,8 @@ This P4 pass added the following bug-audit and hardening fixes to the Compliance
 
 - **FUS → CMS precheck**: `src/agents/follow_up_sequences/app/clients/compliance_client.py` calls `POST /api/v1/precheck` to centralise compliance screening before any outbound send. Configure `COMPLIANCE_MONITOR_URL` and `COMPLIANCE_API_KEY` in `src/agents/follow_up_sequences/.env`.
 - **Shared infrastructure**: `docker-compose.yml` now provisions Postgres, Redis, Redpanda (Kafka), Prometheus, Grafana, Schema Registry, and an OpenTelemetry Collector for CMS to use when `STORAGE_GATEWAY=postgres`, `CACHE_GATEWAY=redis`, `KAFKA_PRODUCE=true`, and `KAFKA_INGEST=true`.
-- **Bug-audit fixes**: `app/main.py` `_coverage_loop` now uses `coverage_sweep_interval_min` (`app/main.py:94-95`); `app/core/config.py` adds `coverage_sweep_interval_min` and `data_retention_years` (`app/core/config.py:85,118`); `app/http_source.poll_once` safely handles non-numeric `source_seq` and `cursor` (`app/http_source.py:31-38`); `app/api/compliance.py::CaseUpdate.status` is `Literal["open", "investigating", "remediated", "closed"]` (`app/api/compliance.py:161`) and `app/service.py::_raise` is typed with `Domain`/`Severity` (`app/service.py:79-83`); `app/privacy.py` retention uses exact-year `data_retention_years` with leap-year handling, falling back to `data_retention_days` if > 0 (`app/privacy.py:15-27`); `app/disclosures.py` `days_left` is now a float from total seconds (`app/disclosures.py:44-50`); and `app/coldstore.py` lists S3 ranges once and uses `encoding="utf-8"` for local/S3 files (`app/coldstore.py:45-46,79-89,97,110-111`).
+- **Bug-audit fixes**: `app/main.py` `_coverage_loop` now uses `coverage_sweep_interval_min` (`app/main.py:94-95`); `app/core/config.py` adds `coverage_sweep_interval_min` and `data_retention_years` (`app/core/config.py:86,119`); `app/http_source.poll_once` safely handles non-numeric `source_seq` and `cursor` (`app/http_source.py:31-38`); `app/api/compliance.py::CaseUpdate.status` is `Literal["open", "investigating", "remediated", "closed"]` (`app/api/compliance.py:161`), `app/casework.py::update_case` uses the same `CaseStatus` `Literal`, and `app/service.py::_raise` is typed with `Domain`/`Severity` (`app/service.py:79-83`); `app/privacy.py` retention uses exact-year `data_retention_years` with leap-year handling, falling back to `data_retention_days` if > 0 (`app/privacy.py:15-27`); `app/service.py::audit_purge` now uses `privacy._add_years` for an exact-year retention cutoff (`app/service.py:585`); `app/privacy.py` and `app/disclosures.py` `days_left` are now floats from total seconds (`app/privacy.py:45`, `app/disclosures.py:44`); `app/coldstore.py` lists S3 ranges once (`S3ColdStore._range_keys` and `fetch`) and uses `encoding="utf-8"` for local/S3 files (`LocalColdStore.archive` and `S3ColdStore.archive`).
+- **Thread-safety hardening**: every global in-memory store and all in-memory repository methods now use `threading.RLock()` — `app/audit.py`, `app/cache.py`, `app/coverage.py`, `app/events.py`, `app/kafka_bus.py`, `app/worm.py`, `app/coldstore.py`, `app/casework.py` dedup, and `app/repositories.py`.
 - **Default-dev-key rejection**: `app/core/config.py` now raises `ValueError` if `API_KEY=change-me-dev-key` and `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway.
 
 Items still deferred:
@@ -302,7 +303,7 @@ src/agents/compliance_monitor/
 │   ├── test_kafka_spark_cache.py
 │   ├── test_persistence_sql.py
 │   ├── test_activity_dashboard.py
-│   └── test_health.py          # 106 tests total
+│   └── test_health.py          # 109 tests total
 ├── migrations/
 │   ├── env.py
 │   ├── script.py.mako
@@ -331,7 +332,7 @@ src/agents/compliance_monitor/
 | Gateway route notes | Notes that the gateway proxies to the compliance engine | `src/api/routes/compliance_monitor.py` |
 | Compose orchestration | Added `compliance_monitor` service + `COMPLIANCE_MONITOR_URL` | `docker-compose.yml:17-18, 33-37` |
 | Main README | Listed `compliance_monitor` as the `Compliance-Monitoring` engine | `README.md:12` |
-| Agent tests | Standalone pytest suite (106 tests) | `src/agents/compliance_monitor/tests/` |
+| Agent tests | Standalone pytest suite (109 tests) | `src/agents/compliance_monitor/tests/` |
 
 The gateway proxies `/compliance-monitor/*` to the agent once `COMPLIANCE_MONITOR_URL` is configured.
 
@@ -396,7 +397,7 @@ Key environment variables (see `src/agents/compliance_monitor/.env.example`):
 - 🚧 Batch redlining / geographic disparity logic is unit-tested and Spark-runnable; production scheduling and warehouse integration are P4.
 - 🚧 RAG dashboard and case/alert lists are available via REST; a rendered BI/ops dashboard is P4.
 - ✅ Audit trail can be exported as JSON, CSV, or PDF by privileged roles (`X-Role`).
-- ✅ 106/106 agent unit and functional tests pass (`pytest -q`).
+- ✅ 109/109 agent unit and functional tests pass (`pytest -q`).
 
 ## 15. P4 Next Steps
 

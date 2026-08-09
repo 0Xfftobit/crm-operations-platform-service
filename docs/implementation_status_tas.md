@@ -123,11 +123,14 @@ This P4 pass added the following production hardening pieces without breaking P0
 This P4 pass also wired real HTTP clients for CRM, calendar, and feature-store integrations:
 
 4. **CRM/calendar/feature-store HTTP clients**: `app/integrations/crm.py`, `app/integrations/calendar.py`, and `app/integrations/feature_store.py` now call `CRM_SERVICE_URL`, `CALENDAR_SERVICE_URL`, and `FEATURE_STORE_URL` when configured, falling back to in-process stubs otherwise. `CRM_SERVICE_URL`/`CRM_API_KEY`, `CALENDAR_SERVICE_URL`/`CALENDAR_API_KEY`, and `FEATURE_STORE_URL`/`FEATURE_STORE_API_KEY` were added to `.env.example` and `app/core/config.py`.
-5. **Doc-request workflow fix**: `verify_documents_activity` in `app/workflows/doc_request_temporal.py:162-163` now defaults to `verified=False` when no document signals have been received.
+5. **Doc-request workflow fix**: `verify_documents_activity` in `app/workflows/doc_request_temporal.py:162-163` and `complete_verification` in `app/workflows/doc_request_chain.py:210-213` now default to `verified=False` when no document signals have been received or the verification result is missing/empty.
 6. **`document_received` validation**: `POST /events/document-received` (`app/api/events.py:31-46`) resolves and validates the `workflow_id` before signaling a doc-request workflow.
-7. **Default-dev-key rejection**: `app/core/config.py` now raises `ValueError` if `API_KEY=change-me-dev-key` and `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway.
-8. **Docker-compose cross-agent wiring**: `docker-compose.yml` sets `FOLLOW_UP_SEQUENCES_URL=http://follow_up_sequences:8000` and `FUS_FANOUT_ENABLED=true` for TAS by default.
-9. **Cross-agent client tests**: `tests/test_cross_agent.py` mocks `httpx.Client` and verifies TAS→FUS `stage_changed` and `lead_scored` fan-out call the right endpoints with `X-API-Key` and `X-Request-ID`.
+7. **Trigger-id validation**: `normalize_trigger` (`app/messaging/trigger_ingestor.py:55-57`) asserts and stringifies the generated `trigger_id`; `run_pipeline_stages` (`app/pipeline.py:57-58`) and `process_event`/`_persist_and_emit` (`app/service.py:61-62`, `app/service.py:301-302`) assert the trigger id is a `str` before it is used by downstream functions.
+8. **In-memory state thread-safety**: `threading.RLock()` now protects `app/store.py`, `app/runs.py`, `app/ledger.py`, `app/events.py`, `app/event_history.py`, `app/dlq.py`, `app/metrics.py`, `app/guards.py`, `app/escalation.py`, `app/cron_triggers.py`, `app/kafka_consumer.py`, `app/kafka_consumer_group.py`, `app/messaging/kafka_bus.py`, `app/messaging/trigger_ingestor.py`, `app/integrations/temporal.py`, `app/integrations/activity_runner.py`, `app/integrations/feature_store.py`, `app/workflows/doc_request_chain.py`, `app/tracing.py`, `app/agents/llm_task_agent.py`, `app/persistence/memory_store.py`, and `app/persistence/redis_store.py`.
+9. **Default-dev-key rejection**: `app/core/config.py` now raises `ValueError` if `API_KEY=change-me-dev-key` and `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway.
+10. **Docker-compose cross-agent wiring**: `docker-compose.yml` sets `FOLLOW_UP_SEQUENCES_URL=http://follow_up_sequences:8000` and `FUS_FANOUT_ENABLED=true` for TAS by default.
+11. **Cross-agent client tests**: `tests/test_cross_agent.py` mocks `httpx.Client` and verifies TAS→FUS `stage_changed` and `lead_scored` fan-out call the right endpoints with `X-API-Key` and `X-Request-ID`.
+12. **Bug-audit tests**: `tests/test_bug_audit.py` adds 6 regression tests covering `trigger_id` stringification/assertion, duplicate-event dedupe concurrency, rule and run creation concurrency, and doc-request `verified=False` default; the suite is now `78/78` tests passing (1 skipped).
 
 Items still deferred:
 - Production CRM/calendar/feature-store endpoints (Google/Outlook, enterprise CRM, Feast/Tecton).
@@ -259,6 +262,7 @@ src/agents/task_automation/
 ├── tests/
 │   ├── conftest.py                # FastAPI TestClient + fixtures
 │   ├── test_acceptance.py         # AC1–AC6 acceptance tests
+│   ├── test_bug_audit.py          # 6 regression tests covering bug-audit fixes
 │   ├── test_api.py                # health, API-key, rules, tasks, events
 │   ├── test_architecture.py       # architecture endpoint coverage
 │   ├── test_business_hours.py     # due-date/business hours tests

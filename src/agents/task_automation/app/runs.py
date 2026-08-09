@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
 _runs: dict[str, dict[str, Any]] = {}
 
+_lock = RLock()
+
 
 def reset_runs() -> None:
-    _runs.clear()
+    with _lock:
+        _runs.clear()
 
 
 def create_run(
@@ -36,36 +40,42 @@ def create_run(
         "completed_at": None,
         "latency_ms": None,
     }
-    _runs[run_id] = row
+    with _lock:
+        _runs[run_id] = row
     return row
 
 
 def append_run_action(run_id: str, action: dict[str, Any]) -> None:
-    row = _runs.get(run_id)
-    if row:
-        row.setdefault("actions", []).append(action)
+    with _lock:
+        row = _runs.get(run_id)
+        if row:
+            row.setdefault("actions", []).append(action)
 
 
 def record_run_actions(run_id: str, actions: list[dict[str, Any]]) -> None:
-    row = _runs.get(run_id)
-    if row:
-        row["actions"] = actions
+    with _lock:
+        row = _runs.get(run_id)
+        if row:
+            row["actions"] = actions
 
 
 def get_run(run_id: str) -> dict[str, Any] | None:
-    return _runs.get(run_id)
+    with _lock:
+        return _runs.get(run_id)
 
 
 def get_run_by_trigger(trigger_id: str) -> dict[str, Any] | None:
-    return next((r for r in _runs.values() if r.get("trigger_id") == trigger_id), None)
+    with _lock:
+        return next((r for r in _runs.values() if r.get("trigger_id") == trigger_id), None)
 
 
 def update_run(run_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
-    row = _runs.get(run_id)
-    if not row:
-        return None
-    row.update(patch)
-    return row
+    with _lock:
+        row = _runs.get(run_id)
+        if not row:
+            return None
+        row.update(patch)
+        return row
 
 
 def complete_run(
@@ -78,26 +88,28 @@ def complete_run(
     latency_ms: float | None = None,
     error: str | None = None,
 ) -> dict[str, Any] | None:
-    row = _runs.get(run_id)
-    if not row:
-        return None
-    row["status"] = status
-    row["completed_at"] = datetime.now(UTC).isoformat()
-    if actions is not None:
-        row["actions"] = actions
-    if ledger_ids is not None:
-        row["ledger_ids"] = ledger_ids
-    if conflicts is not None:
-        row["conflicts"] = conflicts
-    if latency_ms is not None:
-        row["latency_ms"] = latency_ms
-    if error:
-        row["error"] = error
-    return row
+    with _lock:
+        row = _runs.get(run_id)
+        if not row:
+            return None
+        row["status"] = status
+        row["completed_at"] = datetime.now(UTC).isoformat()
+        if actions is not None:
+            row["actions"] = actions
+        if ledger_ids is not None:
+            row["ledger_ids"] = ledger_ids
+        if conflicts is not None:
+            row["conflicts"] = conflicts
+        if latency_ms is not None:
+            row["latency_ms"] = latency_ms
+        if error:
+            row["error"] = error
+        return row
 
 
 def list_runs(*, lead_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-    rows = list(_runs.values())
+    with _lock:
+        rows = list(_runs.values())
     if lead_id:
         rows = [r for r in rows if r.get("lead_id") == lead_id]
     return sorted(rows, key=lambda r: r["started_at"], reverse=True)[:limit]

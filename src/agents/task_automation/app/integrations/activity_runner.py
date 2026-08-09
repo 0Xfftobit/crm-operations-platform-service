@@ -6,6 +6,7 @@ import logging
 import random
 import time
 from collections.abc import Callable, Coroutine
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -15,6 +16,8 @@ from app.integrations.activities.connectors import ACTIVITY_NAMES
 logger = logging.getLogger(__name__)
 
 _execution_log: list[dict[str, Any]] = []
+
+_lock = RLock()
 
 
 class ConnectorActivityError(Exception):
@@ -26,11 +29,13 @@ class ConnectorActivityError(Exception):
 
 
 def reset_activity_runner() -> None:
-    _execution_log.clear()
+    with _lock:
+        _execution_log.clear()
 
 
 def get_activity_executions(*, limit: int = 50) -> list[dict[str, Any]]:
-    return list(reversed(_execution_log[-limit:]))
+    with _lock:
+        return list(reversed(_execution_log[-limit:]))
 
 
 def build_retry_policy_dict() -> dict[str, Any]:
@@ -99,19 +104,21 @@ def _execute_local_with_retry(
                 "latency_ms": elapsed_ms,
                 "retry_policy": policy,
             }
-            _execution_log.append(row)
+            with _lock:
+                _execution_log.append(row)
             return {**result, "_activity_meta": row}
         except Exception as exc:
             last_error = exc
             elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
-            _execution_log.append({
-                "activity_name": activity_name,
-                "attempt": attempt,
-                "outcome": "failed",
-                "error": str(exc),
-                "provider": "local_activity",
-                "latency_ms": elapsed_ms,
-            })
+            with _lock:
+                _execution_log.append({
+                    "activity_name": activity_name,
+                    "attempt": attempt,
+                    "outcome": "failed",
+                    "error": str(exc),
+                    "provider": "local_activity",
+                    "latency_ms": elapsed_ms,
+                })
             logger.warning(
                 "activity_attempt_failed",
                 extra={"activity": activity_name, "attempt": attempt, "error": str(exc)},
@@ -141,13 +148,14 @@ async def _execute_via_temporal_async(activity_name: str, payload: dict[str, Any
         task_queue=settings.temporal_task_queue,
     )
     result = await handle.result()
-    _execution_log.append({
-        "activity_name": activity_name,
-        "outcome": "success",
-        "provider": "temporal",
-        "workflow_id": handle.id,
-        "retry_policy": build_retry_policy_dict(),
-    })
+    with _lock:
+        _execution_log.append({
+            "activity_name": activity_name,
+            "outcome": "success",
+            "provider": "temporal",
+            "workflow_id": handle.id,
+            "retry_policy": build_retry_policy_dict(),
+        })
     return {**result, "_activity_meta": {"provider": "temporal", "workflow_id": handle.id}}
 
 

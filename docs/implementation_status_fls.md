@@ -180,7 +180,8 @@ This P4 pass added the following bug-audit fixes to the Feedback Loop agent whil
 
 - **PAS → FLS outcome fan-out**: `src/agents/performance_analytics/app/clients/feedback_client.py` forwards `loan.funded` / `deal.lost` outcome events from Performance Analytics to `POST /api/v1/outcomes` when `OUTCOME_FANOUT_ENABLED=true` and `FEEDBACK_LOOP_URL` are configured in Performance Analytics.
 - **Shared infrastructure**: `docker-compose.yml` now provisions Postgres, Redis, Redpanda (Kafka), Prometheus, Grafana, Schema Registry, and an OpenTelemetry Collector. FLS can switch from in-memory to disk persistence today; Postgres/S3 and Kafka integration remain P4.
-- **Bug-audit fixes**: `app/drift.py` now imports and uses `timedelta` for exact time-window comparisons (`app/drift.py:6,86-88`); `tests/test_feedback_loop.py` drift test passes. `app/model_retrainer.py` now uses `joblib` for dataset and model serialization and stores in-memory artifacts on the repository for tests when `STORAGE_BACKEND=memory` (`app/model_retrainer.py:9,167,218,271,274`).
+- **Bug-audit fixes**: `app/abtest.py` auto-computes `traffic_split` so rounded variants sum to exactly 100% and absorbs the rounding delta in the first variant (`app/abtest.py:72-82`); the guardrail fallback only compares the primary conversion rate to `guardrail_threshold` when no separate `guardrail_metric` is configured (`app/abtest.py:230-239`); `app/abtest.py::_variant_hash` uses SHA-256 (`app/abtest.py:20-21`); `app/aggregator.py::_precision_recall_f1` returns a 4-tuple (`precision`, `recall`, `f1`, `accuracy`) matching its type annotation (`app/aggregator.py:50-66`); `app/drift.py` now imports and uses `timedelta` for exact time-window comparisons (`app/drift.py:6,86-88`); `app/model_retrainer.py` now uses `joblib` for dataset and model serialization and stores in-memory artifacts on the repository for tests when `STORAGE_BACKEND=memory` (`app/model_retrainer.py:9,167,218,271,274`).
+- **Thread-safety hardening**: all in-memory repository methods now use `threading.RLock()` (`app/repositories.py`); `app/drift.py` protects the global `_reference_distributions` with a module-level `RLock`; `app/model_retrainer.py` no longer assigns directly to `repo._artifacts` and instead uses the public `ModelVersionRepository.add_artifact` method.
 - **Default-dev-key rejection**: `app/core/config.py` now raises `ValueError` if `API_KEY=change-me-dev-key` and `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway.
 
 Items still deferred:
@@ -249,7 +250,7 @@ src/agents/feedback_loop/
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py             # FastAPI TestClient fixture
-│   └── test_feedback_loop.py   # 22 unit/functional tests covering P0-P3 + subtasks
+│   └── test_feedback_loop.py   # 25 unit/functional tests covering P0-P3 + subtasks
 ├── pyproject.toml              # deps + ruff + pytest config
 ├── uv.lock                     # frozen dependency set
 ├── Dockerfile
@@ -306,7 +307,7 @@ Key environment variables (see `src/agents/feedback_loop/.env.example`):
 - ✅ Model lineage report (`GET /api/v1/models/{model_id}/lineage`) is reproducible and complete.
 - 🚧 A/B test framework supports consistent variant allocation, power-analysis minimum sample sizes, p-value thresholds, guardrail metrics, and early stopping (dashboard/UI P4).
 - 🚧 Model retraining supports manual, scheduled, performance, and drift triggers with data validation and event-log notifications (external alerting and production scheduler P4).
-- ✅ Unit + functional tests pass (`22/22` in the agent test suite; `2/2` root gateway tests).
+- ✅ Unit + functional tests pass (`25/25` in the agent test suite; `2/2` root gateway tests).
 
 ## 15. P4 Next Steps
 

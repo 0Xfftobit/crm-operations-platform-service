@@ -80,7 +80,7 @@ This document tracks what has been implemented against the FUS ticket (`docs/tic
 | Channel integrations: email API, SMS gateway (Twilio), WhatsApp Business API | ✅/🚧 | Twilio/SendGrid/WhatsApp Business HTTP clients in `app/providers.py:40-117`; mock fallback when credentials are unset (`_mock_send` at `app/providers.py:34-37`); `set_provider()` injection remains available |
 | Enrollment state per lead: `{ lead_id, sequence_id, current_step, status, enrolled_at }` | ✅ | `Enrollment` model at `app/domain/models.py:82-99` and `GET /enrollments/{id}` at `app/api/sequences.py:56-61` |
 | Rate limiting: prevent over-messaging a single lead | ✅ | Global + per-sequence day/week caps in `app/frequency.py:26-81`, enforced in `app/guardrails.py:70-80` |
-|| Thread-safety for in-memory repositories | ✅ | All repository methods are wrapped by `_synchronized`, which acquires a per-instance `threading.RLock()` (`app/repositories.py:23-29`) |
+|| Thread-safety for in-memory state | ✅ | All repository methods are wrapped by `_synchronized` (`app/repositories.py:23-29`); `app/events.py`, `app/notifications.py`, `app/providers.py`, and `app/frequency.FrequencyStore` use `threading.RLock()` for in-process logs, provider registry, mock send log, and frequency counters |
 || Cross-agent request-id propagation | ✅ | The CMS precheck client (`app/clients/compliance_client.py:52`) and notification client (`app/notifications.py:26-28`) send `X-Request-ID`/`X-API-Key` headers; the gateway generates and returns `X-Request-ID` on all proxy responses |
 
 ### Acceptance Criteria
@@ -313,7 +313,7 @@ Key environment variables (see `src/agents/follow_up_sequences/.env.example`):
 - ✅ Idempotency keys are recorded and a 5-minute pre-send `_already_attempted` guard blocks redelivered ticks.
 - ✅ Bounce/complaint/spam/block suppression webhook sets `Contact.suppressed`, stops active enrollments, and is enforced by `guardrails.check`.
 - ✅ LO/owner reply notifications are sent via HTTP when `NOTIFICATION_SERVICE_URL` is configured and fall back to an in-process log.
-- ✅ Unit + functional tests pass (`41/41` in the agent test suite).
+- ✅ Unit + functional tests pass (`50/50` in the agent test suite).
 
 ## 12a. P4 Implementation Update
 
@@ -324,11 +324,12 @@ This P4 pass added the following production hardening pieces without breaking P0
 3. **Environment variables**: `FUS_PRECHECK_ENABLED`, `COMPLIANCE_MONITOR_URL`, `COMPLIANCE_API_KEY`, `FUS_PRECHECK_TIMEOUT`, `NOTIFICATION_SERVICE_URL`, `NOTIFICATION_API_KEY`, and `INTEGRATION_TIMEOUT_S` added to `.env.example` and `app/core/config.py`.
 4. **Suppression webhook**: `SuppressionEvent` and `POST /api/v1/webhooks/suppression` (`app/api/sequences.py:124-126`) ingest provider bounce/complaint/spam/block events; `service.apply_suppression` (`app/service.py:365-383`) sets `Contact.suppressed`/`suppressed_reason`, stops active enrollments, and emits `contact.suppressed`; `guardrails.check` (`app/guardrails.py:47-48`) stops sends on a suppressed contact.
 5. **LO/owner reply notifications**: `Contact.owner_id` field (`app/domain/models.py:64`) plus `app/notifications.py:notify_owner_of_reply` with HTTP `POST` to `NOTIFICATION_SERVICE_URL` and fallback to an in-process log; `service.ingest_engagement` calls it for `reply` events when `contact.owner_id` is set (`app/service.py:300-305`).
-6. **Thread-safety**: `app/repositories.py` now uses per-instance `threading.RLock()` via the `_synchronized` decorator on all repository methods.
+6. **Thread-safety**: `app/repositories.py` now uses per-instance `threading.RLock()` via the `_synchronized` decorator on all repository methods. `app/events.py`, `app/notifications.py`, `app/providers.py`, and the in-memory `app/frequency.FrequencyStore` now use module-level `threading.RLock()` to protect in-process logs, the provider registry, the mock send log, and frequency counters.
 7. **Request-id propagation**: `app/clients/compliance_client.py:52` sends `X-Request-ID`; the gateway `src/api/main.py` generates/propagates `X-Request-ID` and returns it on every proxy response (including 502/504/404), with root integration tests in `tests/integration/test_gateway.py:70-89`.
 8. **Default-dev-key rejection**: `app/core/config.py` now raises `ValueError` if `API_KEY=change-me-dev-key` and `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway.
 9. **Docker-compose cross-agent wiring**: `docker-compose.yml` already set `COMPLIANCE_MONITOR_URL=http://compliance_monitor:8000` and `FUS_PRECHECK_ENABLED=true` for FUS by default.
 10. **Cross-agent client tests**: `tests/test_cross_agent.py` mocks `httpx.Client` and verifies FUS→CMS `precheck` calls the right endpoint with `X-API-Key` and `X-Request-ID`.
+11. **Bug-audit hardening**: frequency-cap day/week keys are normalized to UTC before formatting (`app/frequency.py:19-35`); `StateRequest.state` is validated via `Literal["paused", "resume", "stopped"]` at the API (`app/api/sequences.py:69-70`) and `service.set_enrollment_state()` rejects invalid states (`app/service.py:311-323`); mutable `dict` Pydantic request defaults use `Field(default_factory=dict)` (`app/api/sequences.py:45,135`); new `tests/test_bug_audit.py` covers timezone-normalized frequency keys and concurrent safety for the event log, notification log, provider mock send log, and `FrequencyStore` counters.
 
 Items still deferred:
 - Real channel providers (Twilio, SendGrid, WhatsApp Business API).

@@ -5,17 +5,23 @@ with a remediation SLA so nothing severe sits unactioned. Pure functions over in
 the service layer records audit entries and publishes the outbound events.
 """
 from datetime import datetime, timedelta
+from threading import RLock
+from typing import Literal
 from uuid import uuid4
 
 from app.domain.models import Alert, Case, Domain, Severity
 from app.repositories import AlertRepository, CaseRepository
 
+CaseStatus = Literal["open", "investigating", "remediated", "closed"]
+
 # Noise control (FR-019): last time an identical (rule, entity, severity) alert fired.
 _recent: dict[tuple[str, str, str], datetime] = {}
+_recent_lock = RLock()
 
 
 def reset_suppression() -> None:
-    _recent.clear()
+    with _recent_lock:
+        _recent.clear()
 
 
 def raise_alert(
@@ -28,11 +34,12 @@ def raise_alert(
     dedup window is suppressed (alert=None); **criticals are never suppressed** (BR / edge-case).
     A critical (or ``force_case``) alert auto-opens a case."""
     key = (rule_id, entity_id, severity)
-    if severity != "critical" and dedup_window_min > 0:
-        last = _recent.get(key)
-        if last is not None and now - last < timedelta(minutes=dedup_window_min):
-            return None, None, True
-    _recent[key] = now
+    with _recent_lock:
+        if severity != "critical" and dedup_window_min > 0:
+            last = _recent.get(key)
+            if last is not None and now - last < timedelta(minutes=dedup_window_min):
+                return None, None, True
+        _recent[key] = now
     alert = Alert(alert_id=uuid4().hex, rule_id=rule_id, domain=domain, severity=severity,
                   entity_id=entity_id, message=message, evidence=evidence or {},
                   audit_seq=audit_seq, created_at=now)
@@ -48,7 +55,7 @@ def raise_alert(
 
 def update_case(
     case_repo: CaseRepository, *, case_id: str,
-    status: str | None = None, assignee: str | None = None,
+    status: CaseStatus | None = None, assignee: str | None = None,
 ) -> Case:
     case = case_repo.get(case_id)
     if case is None:

@@ -71,15 +71,15 @@ def _linear(path: list[Any]) -> list[tuple[Any, float]]:
     return [(t, share) for t in path]
 
 
-def _time_decay(path: list[Any]) -> list[tuple[Any, float]]:
+def _time_decay(path: list[Any], funded_at: datetime | None = None) -> list[tuple[Any, float]]:
     if not path:
         return []
     settings = get_settings()
-    # Use the last touch's sent_at as the conversion reference.
-    funded_at = max(t.sent_at for t in path)
+    # Use the actual conversion time when available; fall back to the last touch.
+    reference = funded_at if funded_at is not None else max(t.sent_at for t in path)
     weights: list[float] = []
     for t in path:
-        days = (funded_at - t.sent_at).total_seconds() / 86400
+        days = (reference - t.sent_at).total_seconds() / 86400
         half_life = settings.time_decay_halflife_d
         w = 0.5 ** (days / half_life) if half_life else 1.0
         weights.append(w)
@@ -195,7 +195,7 @@ def _shapley_value(path: list[Any]) -> list[tuple[Any, float]]:
 # ── Public attribution API ──────────────────────────────────────────────────
 
 
-def _apply_model(path: list[Any], model: str) -> list[tuple[Any, float]]:
+def _apply_model(path: list[Any], model: str, funded_at: datetime | None = None) -> list[tuple[Any, float]]:
     if model == "first_touch":
         return _first_touch(path)
     if model == "last_touch":
@@ -203,12 +203,12 @@ def _apply_model(path: list[Any], model: str) -> list[tuple[Any, float]]:
     if model == "linear" or model == "multi_touch":
         return _linear(path)
     if model == "time_decay":
-        return _time_decay(path)
+        return _time_decay(path, funded_at=funded_at)
     if model == "markov":
         return _markov(path)
     if model == "shapley":
         return _shapley_value(path)
-    return _time_decay(path)
+    return _time_decay(path, funded_at=funded_at)
 
 
 def compute_attribution_for_deal(deal_id: str, model: str | None = None) -> AttributionRecord | None:
@@ -219,7 +219,8 @@ def compute_attribution_for_deal(deal_id: str, model: str | None = None) -> Attr
     if not funded:
         return None
 
-    path = _touch_path(deal_id, funded["occurred_at"])
+    funded_at = funded["occurred_at"]
+    path = _touch_path(deal_id, funded_at)
     if not path:
         # Fallback: heuristic attribution flagged low-confidence.
         return AttributionRecord(
@@ -229,7 +230,7 @@ def compute_attribution_for_deal(deal_id: str, model: str | None = None) -> Attr
             credits=[],
         )
 
-    credited = _apply_model(path, model)
+    credited = _apply_model(path, model, funded_at=funded_at)
     credits = [
         AttributionCredit(
             touch_id=t.touch_id,

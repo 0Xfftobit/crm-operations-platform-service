@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any
 
 import httpx
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Recorded mock sends — inspectable by tests / analytics until real providers are wired.
 sent_log: list[dict] = []
+_lock = RLock()
 
 
 @dataclass
@@ -32,8 +34,9 @@ class ProviderResult:
 
 
 def _mock_send(contact: Contact, channel: str, body: str) -> ProviderResult:
-    sent_log.append({"contact_id": contact.contact_id, "tenant_id": contact.tenant_id,
-                     "channel": channel, "body": body})
+    with _lock:
+        sent_log.append({"contact_id": contact.contact_id, "tenant_id": contact.tenant_id,
+                         "channel": channel, "body": body})
     return ProviderResult(True, f"mock-{channel}")
 
 
@@ -151,21 +154,25 @@ _provider = _default_provider
 def set_provider(fn) -> None:
     """Inject a real provider callable ``(contact, channel, body) -> ProviderResult``."""
     global _provider
-    _provider = fn
+    with _lock:
+        _provider = fn
 
 
 def reset() -> None:
     global _provider
-    _provider = _default_provider
-    sent_log.clear()
+    with _lock:
+        _provider = _default_provider
+        sent_log.clear()
 
 
 def deliver(contact: Contact, channel: str, body: str, *, max_attempts: int = 4) -> ProviderResult:
     """Send through the channel provider with retry and exponential backoff for 429s."""
+    with _lock:
+        provider = _provider
     last = ProviderResult(False, "", 0, "not_attempted")
     for attempt in range(1, max_attempts + 1):
         try:
-            res = _provider(contact, channel, body)
+            res = provider(contact, channel, body)
         except ProviderRateLimit:
             last = ProviderResult(False, f"provider-{channel}", attempt, "rate_limited")
             time.sleep(min(2 ** attempt * 0.5, 30.0))

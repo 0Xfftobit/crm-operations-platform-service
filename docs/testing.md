@@ -40,7 +40,7 @@ cd src/agents/compliance_monitor
 uv run pytest -q
 ```
 
-Expected: `106 passed`
+Expected: `109 passed`
 
 ### Feedback Loop
 
@@ -49,7 +49,7 @@ cd src/agents/feedback_loop
 uv run pytest -q
 ```
 
-Expected: `22 passed`
+Expected: `25 passed`
 
 ### Follow-up Sequences
 
@@ -58,7 +58,7 @@ cd src/agents/follow_up_sequences
 uv run pytest -q
 ```
 
-Expected: `40 passed`
+Expected: `50 passed`
 
 ### Performance Analytics
 
@@ -67,7 +67,7 @@ cd src/agents/performance_analytics
 uv run pytest -q
 ```
 
-Expected: `34 passed`
+Expected: `42 passed`
 
 ### Task Automation
 
@@ -76,7 +76,7 @@ cd src/agents/task_automation
 uv run pytest -q
 ```
 
-Expected: `69 passed, 1 skipped`
+Expected: `78 passed, 1 skipped`
 
 ## 3. Gateway / Integration Tests
 

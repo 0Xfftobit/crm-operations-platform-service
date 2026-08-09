@@ -403,6 +403,79 @@ class TestABTest:
         forced = client.post(f"{BASE}/experiments/{exp_id}/promote", json={"force": True}).json()
         assert forced["status"] == "promoted"
 
+    def test_traffic_split_rounds_to_exactly_100(self, client: TestClient) -> None:
+        # traffic_pct values are ignored when traffic_split is computed automatically;
+        # the bug-audit item is that auto-computed splits must sum to exactly 100.
+        variants = [{"name": f"v{i}", "traffic_pct": 100 / 7} for i in range(7)]
+        exp = client.post(
+            f"{BASE}/experiments",
+            json={
+                "name": "split-sum-test",
+                "hypothesis": "splits must sum to 100",
+                "engine_name": "lead_scoring",
+                "variants": variants,
+            },
+        ).json()
+        total = round(sum(exp["traffic_split"].values()), 2)
+        assert total == 100.0
+
+    def test_guardrail_fallback_not_used_when_metric_configured(self, client: TestClient) -> None:
+        """Guardrail metric configured and no guardrail values recorded.
+
+        The fallback (compare primary conversion rate to guardrail_threshold) must not run,
+        otherwise a threshold of 1.5 above the 100% conversion rate would falsely breach.
+        """
+        exp = client.post(
+            f"{BASE}/experiments",
+            json={
+                "name": "guardrail-fallback-test",
+                "hypothesis": "fallback does not fire when guardrail metric is set",
+                "engine_name": "lead_scoring",
+                "experiment_type": "model",
+                "guardrail_metric": "retention",
+                "guardrail_threshold": 1.5,
+                "min_duration_hours": 0.0,
+                "variants": [
+                    {"name": "control", "traffic_pct": 50},
+                    {"name": "challenger", "traffic_pct": 50},
+                ],
+            },
+        ).json()
+        exp_id = exp["experiment_id"]
+        for i in range(20):
+            resp = client.post(f"{BASE}/experiments/{exp_id}/assign", json={"entity_id": f"lead-{i}"}).json()
+            variant = resp["variant"]
+            client.post(
+                f"{BASE}/experiments/{exp_id}/record",
+                json={"variant": variant, "entity_id": f"lead-{i}", "metric_value": 1.0},
+            )
+        report = client.post(f"{BASE}/experiments/{exp_id}/evaluate").json()
+        assert report["guardrail_breached"] is False
+
+    def test_drift_window_excludes_30d1s_predictions(self, client: TestClient) -> None:
+        from app import drift as drift_mod
+
+        old = datetime.now(UTC) - timedelta(days=30, seconds=1)
+        client.post(
+            f"{BASE}/predictions",
+            json=_prediction_payload(
+                entity_id="drift-old",
+                scored_at=old.isoformat(),
+                features={"f1": 1.0},
+            ),
+            headers={"X-API-Key": API_KEY},
+        )
+        client.post(
+            f"{BASE}/predictions",
+            json=_prediction_payload(
+                entity_id="drift-recent",
+                scored_at=(datetime.now(UTC) - timedelta(days=29)).isoformat(),
+                features={"f1": 1.0},
+            ),
+            headers={"X-API-Key": API_KEY},
+        )
+        assert len(drift_mod._recent_values("lead_scoring", "f1", max_age_days=30)) == 1
+
 
 class TestSubtasks:
     def test_performance_trigger_auto_retrains(self, client: TestClient) -> None:

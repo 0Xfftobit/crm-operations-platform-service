@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -15,11 +16,14 @@ logger = logging.getLogger(__name__)
 _workflows: dict[str, dict[str, Any]] = {}
 _client: Any = None
 
+_lock = RLock()
+
 
 def reset_temporal() -> None:
     global _client
-    _workflows.clear()
-    _client = None
+    with _lock:
+        _workflows.clear()
+        _client = None
 
 
 async def _get_client():
@@ -27,9 +31,15 @@ async def _get_client():
     from temporalio.client import Client
 
     settings = get_settings()
-    if _client is None:
-        _client = await Client.connect(settings.temporal_host, namespace=settings.temporal_namespace)
-    return _client
+    with _lock:
+        client = _client
+    if client is not None:
+        return client
+
+    new_client = await Client.connect(settings.temporal_host, namespace=settings.temporal_namespace)
+    with _lock:
+        _client = new_client
+        return _client
 
 
 def _local_start_workflow(
@@ -58,7 +68,8 @@ def _local_start_workflow(
         "compensation_available": True,
         "durable": False,
     }
-    _workflows[wf_id] = row
+    with _lock:
+        _workflows[wf_id] = row
     return row
 
 
@@ -107,7 +118,8 @@ async def _start_workflow_async(
         "compensation_available": True,
         "durable": True,
     }
-    _workflows[handle.id] = row
+    with _lock:
+        _workflows[handle.id] = row
     return row
 
 
@@ -156,17 +168,19 @@ def compensate_workflow(workflow_id: str, *, reason: str) -> dict[str, Any] | No
         except Exception as exc:
             logger.warning("temporal_compensate_failed", extra={"error": str(exc)})
 
-    wf = _workflows.get(workflow_id)
-    if not wf:
-        return None
-    wf["status"] = "compensated"
-    wf["compensation_reason"] = reason
-    wf["compensated_at"] = datetime.now(UTC).isoformat()
-    return wf
+    with _lock:
+        wf = _workflows.get(workflow_id)
+        if not wf:
+            return None
+        wf["status"] = "compensated"
+        wf["compensation_reason"] = reason
+        wf["compensated_at"] = datetime.now(UTC).isoformat()
+        return wf
 
 
 def list_workflows(*, lead_id: str | None = None) -> list[dict[str, Any]]:
-    rows = list(_workflows.values())
+    with _lock:
+        rows = list(_workflows.values())
     if lead_id:
         rows = [r for r in rows if r.get("lead_id") == lead_id]
     return rows

@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
 _timers: dict[str, dict[str, Any]] = {}
 
+_lock = RLock()
+
 
 def reset_escalation() -> None:
-    _timers.clear()
+    with _lock:
+        _timers.clear()
 
 
 def register_sla_timer(
@@ -34,31 +38,34 @@ def register_sla_timer(
         "status": "active",
         "breached": False,
     }
-    _timers[task_id] = row
+    with _lock:
+        _timers[task_id] = row
     return row
 
 
 def check_escalations(*, now: datetime | None = None) -> list[dict[str, Any]]:
     """Return breached timers and mark them escalated."""
     now = now or datetime.now(UTC)
-    breached: list[dict[str, Any]] = []
-    for timer in _timers.values():
-        if timer.get("status") != "active":
-            continue
-        due = datetime.fromisoformat(timer["due_at"].replace("Z", "+00:00"))
-        if due.tzinfo is None:
-            due = due.replace(tzinfo=UTC)
-        if now >= due:
-            timer["status"] = "escalated"
-            timer["breached"] = True
-            timer["escalated_at"] = now.isoformat()
-            timer["reassigned_to"] = timer["escalation_assignee"]
-            breached.append(dict(timer))
-    return breached
+    with _lock:
+        breached: list[dict[str, Any]] = []
+        for timer in list(_timers.values()):
+            if timer.get("status") != "active":
+                continue
+            due = datetime.fromisoformat(timer["due_at"].replace("Z", "+00:00"))
+            if due.tzinfo is None:
+                due = due.replace(tzinfo=UTC)
+            if now >= due:
+                timer["status"] = "escalated"
+                timer["breached"] = True
+                timer["escalated_at"] = now.isoformat()
+                timer["reassigned_to"] = timer["escalation_assignee"]
+                breached.append(dict(timer))
+        return breached
 
 
 def list_timers(*, active_only: bool = True) -> list[dict[str, Any]]:
-    rows = list(_timers.values())
+    with _lock:
+        rows = list(_timers.values())
     if active_only:
         rows = [r for r in rows if r.get("status") == "active"]
     return rows

@@ -5,32 +5,39 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from functools import wraps
+from threading import RLock
 from typing import Any
 
 _traces: list[dict[str, Any]] = []
 _active_spans: list[str] = []
 
+_lock = RLock()
+
 
 def reset_traces() -> None:
-    _traces.clear()
-    _active_spans.clear()
+    with _lock:
+        _traces.clear()
+        _active_spans.clear()
 
 
 def get_traces(*, limit: int = 30) -> list[dict[str, Any]]:
-    return list(reversed(_traces[-limit:]))
+    with _lock:
+        return list(reversed(_traces[-limit:]))
 
 
 @contextmanager
 def trace_span(name: str, **attrs: Any) -> Iterator[dict[str, Any]]:
     started = time.perf_counter()
-    _active_spans.append(name)
+    with _lock:
+        _active_spans.append(name)
     span: dict[str, Any] = {"span": name, **attrs}
     try:
         yield span
     finally:
-        _active_spans.pop()
         span["duration_ms"] = round((time.perf_counter() - started) * 1000, 2)
-        _traces.append(span)
+        with _lock:
+            _active_spans.pop()
+            _traces.append(span)
 
 
 def trace_pipeline(name: str) -> Callable:
@@ -46,4 +53,5 @@ def trace_pipeline(name: str) -> Callable:
 
 
 def active_spans() -> list[str]:
-    return list(_active_spans)
+    with _lock:
+        return list(_active_spans)

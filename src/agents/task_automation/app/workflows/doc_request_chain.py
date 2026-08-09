@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -20,10 +21,13 @@ logger = logging.getLogger(__name__)
 _local_workflows: dict[str, dict[str, Any]] = {}
 _index_by_deal: dict[str, list[str]] = {}
 
+_lock = RLock()
+
 
 def reset_workflows() -> None:
-    _local_workflows.clear()
-    _index_by_deal.clear()
+    with _lock:
+        _local_workflows.clear()
+        _index_by_deal.clear()
     from app.workflows.workflow_client import reset_temporal_client
 
     reset_temporal_client()
@@ -79,9 +83,11 @@ def start_doc_request_workflow(
             row["sla_due_at"] = (datetime.now(UTC) + timedelta(hours=sla_hours)).isoformat()
             row["signals_received"] = []
             row["compensation_available"] = True
-            _local_workflows[row["workflow_id"]] = row
-            _index_workflow(row)
-            _persist_workflow(row, status="AwaitingDocs")
+            with _lock:
+                _local_workflows[row["workflow_id"]] = row
+                _index_workflow(row)
+                snapshot = dict(row)
+            _persist_workflow(snapshot, status="AwaitingDocs")
             return row
         except Exception as exc:
             logger.warning("temporal_doc_workflow_fallback", extra={"error": str(exc)})
@@ -102,14 +108,17 @@ def start_doc_request_workflow(
         "signals_received": [],
         "compensation_available": True,
     }
-    _local_workflows[wf_id] = row
-    _index_workflow(row)
-    _persist_workflow(row, status="AwaitingDocs")
+    with _lock:
+        _local_workflows[wf_id] = row
+        _index_workflow(row)
+        snapshot = dict(row)
+    _persist_workflow(snapshot, status="AwaitingDocs")
     return row
 
 
 def signal_document_received(workflow_id: str, *, document_id: str, doc_type: str) -> dict[str, Any] | None:
-    meta = _local_workflows.get(workflow_id)
+    with _lock:
+        meta = _local_workflows.get(workflow_id)
     if meta and meta.get("provider") == "temporal" and _use_temporal():
         try:
             from app.workflows.workflow_client import signal_document_received_temporal
@@ -118,56 +127,65 @@ def signal_document_received(workflow_id: str, *, document_id: str, doc_type: st
                 workflow_id, document_id=document_id, doc_type=doc_type,
             )
             if status:
-                _local_workflows[workflow_id] = {**meta, **status}
-            return status
+                with _lock:
+                    current = _local_workflows.get(workflow_id) or meta
+                    _local_workflows[workflow_id] = {**current, **status}
+                return status
         except Exception as exc:
             logger.warning("temporal_signal_fallback", extra={"workflow_id": workflow_id, "error": str(exc)})
 
-    wf = _local_workflows.get(workflow_id)
-    if not wf or wf["state"] not in ("AwaitingDocs", "Escalated"):
-        return None
-    wf["signals_received"].append({
-        "document_id": document_id,
-        "doc_type": doc_type,
-        "at": datetime.now(UTC).isoformat(),
-    })
-    if documents_complete(
-        document_types=list(wf.get("document_types") or []),
-        signals_received=wf["signals_received"],
-    ):
-        wf["state"] = "Verifying"
-    wf["updated_at"] = datetime.now(UTC).isoformat()
+    with _lock:
+        wf = _local_workflows.get(workflow_id)
+        if not wf or wf["state"] not in ("AwaitingDocs", "Escalated"):
+            return None
+        wf["signals_received"].append({
+            "document_id": document_id,
+            "doc_type": doc_type,
+            "at": datetime.now(UTC).isoformat(),
+        })
+        if documents_complete(
+            document_types=list(wf.get("document_types") or []),
+            signals_received=wf["signals_received"],
+        ):
+            wf["state"] = "Verifying"
+        wf["updated_at"] = datetime.now(UTC).isoformat()
+        snapshot = dict(wf)
+    _persist_workflow(snapshot, status=snapshot["state"])
     return wf
 
 
 def check_sla_timers(*, now: datetime | None = None) -> list[dict[str, Any]]:
     """Local-mode SLA escalation — Temporal workflows use durable timers."""
     now = now or datetime.now(UTC)
-    escalated: list[dict[str, Any]] = []
-    for wf in _local_workflows.values():
-        if wf.get("provider") == "temporal":
-            continue
-        if wf["state"] != "AwaitingDocs":
-            continue
-        due = datetime.fromisoformat(wf["sla_due_at"].replace("Z", "+00:00"))
-        if due.tzinfo is None:
-            due = due.replace(tzinfo=UTC)
-        if now >= due:
-            wf["state"] = "Escalated"
-            wf["escalated_at"] = now.isoformat()
-            wf["escalation"] = escalate_doc_request({
-                "deal_id": wf["deal_id"],
-                "lead_id": wf["lead_id"],
-                "rule_id": wf.get("rule_id"),
-                "sla_hours": wf.get("sla_hours"),
-            })
-            _persist_workflow(wf, status="Escalated")
-            escalated.append(dict(wf))
-    return escalated
+    with _lock:
+        escalated: list[dict[str, Any]] = []
+        for wf in list(_local_workflows.values()):
+            if wf.get("provider") == "temporal":
+                continue
+            if wf["state"] != "AwaitingDocs":
+                continue
+            due = datetime.fromisoformat(wf["sla_due_at"].replace("Z", "+00:00"))
+            if due.tzinfo is None:
+                due = due.replace(tzinfo=UTC)
+            if now >= due:
+                wf["state"] = "Escalated"
+                wf["escalated_at"] = now.isoformat()
+                wf["escalation"] = escalate_doc_request({
+                    "deal_id": wf["deal_id"],
+                    "lead_id": wf["lead_id"],
+                    "rule_id": wf.get("rule_id"),
+                    "sla_hours": wf.get("sla_hours"),
+                })
+                escalated.append(wf)
+        snapshots = [dict(wf) for wf in escalated]
+    for wf in escalated:
+        _persist_workflow(wf, status="Escalated")
+    return snapshots
 
 
 def complete_verification(workflow_id: str, *, verified: bool | None = None) -> dict[str, Any] | None:
-    wf = _local_workflows.get(workflow_id)
+    with _lock:
+        wf = _local_workflows.get(workflow_id)
     if not wf:
         if _use_temporal():
             from app.workflows.workflow_client import query_workflow_temporal
@@ -189,16 +207,20 @@ def complete_verification(workflow_id: str, *, verified: bool | None = None) -> 
         "document_types": wf.get("document_types") or [],
         "signals_received": wf.get("signals_received") or [],
     })
-    wf["verification"] = verification
-    wf["verified"] = verified if verified is not None else verification.get("verified", True)
-    wf["state"] = "Completed"
-    wf["completed_at"] = datetime.now(UTC).isoformat()
-    _persist_workflow(wf, status="Completed")
+    verification = verification or {}
+    with _lock:
+        wf["verification"] = verification
+        wf["verified"] = verified if verified is not None else bool(verification.get("verified", False))
+        wf["state"] = "Completed"
+        wf["completed_at"] = datetime.now(UTC).isoformat()
+        snapshot = dict(wf)
+    _persist_workflow(snapshot, status="Completed")
     return wf
 
 
 def compensate(workflow_id: str, *, reason: str) -> dict[str, Any] | None:
-    meta = _local_workflows.get(workflow_id)
+    with _lock:
+        meta = _local_workflows.get(workflow_id)
     if meta and meta.get("provider") == "temporal" and _use_temporal():
         try:
             from app.workflows.workflow_client import compensate_workflow_temporal
@@ -207,36 +229,43 @@ def compensate(workflow_id: str, *, reason: str) -> dict[str, Any] | None:
         except Exception as exc:
             logger.warning("temporal_compensate_failed", extra={"error": str(exc)})
 
-    wf = _local_workflows.get(workflow_id)
-    if not wf:
-        return None
-    wf["state"] = "Compensated"
-    wf["compensation"] = compensate_doc_request({
-        "workflow_id": workflow_id,
-        "deal_id": wf.get("deal_id"),
-        "reason": reason,
-    })
-    wf["compensated_at"] = datetime.now(UTC).isoformat()
-    return wf
+    with _lock:
+        wf = _local_workflows.get(workflow_id)
+        if not wf:
+            return None
+        wf["state"] = "Compensated"
+        wf["compensation"] = compensate_doc_request({
+            "workflow_id": workflow_id,
+            "deal_id": wf.get("deal_id"),
+            "reason": reason,
+        })
+        wf["compensated_at"] = datetime.now(UTC).isoformat()
+        return wf
 
 
 def get_workflow(workflow_id: str) -> dict[str, Any] | None:
-    meta = _local_workflows.get(workflow_id)
+    with _lock:
+        meta = _local_workflows.get(workflow_id)
     if meta and meta.get("provider") == "temporal" and _use_temporal():
         try:
             from app.workflows.workflow_client import query_workflow_temporal
 
             status = query_workflow_temporal(workflow_id)
             if status:
-                _local_workflows[workflow_id] = {**meta, **status}
+                with _lock:
+                    current = _local_workflows.get(workflow_id) or meta
+                    _local_workflows[workflow_id] = {**current, **status}
                 return status
         except Exception as exc:
             logger.warning("temporal_query_fallback", extra={"workflow_id": workflow_id, "error": str(exc)})
-    return _local_workflows.get(workflow_id)
+    with _lock:
+        return _local_workflows.get(workflow_id)
 
 
 def list_workflows(*, deal_id: str | None = None) -> list[dict[str, Any]]:
-    if deal_id:
-        ids = _index_by_deal.get(deal_id, [])
-        return [row for wf_id in ids if (row := get_workflow(wf_id))]
-    return [row for wf_id in _local_workflows if (row := get_workflow(wf_id))]
+    with _lock:
+        if deal_id:
+            ids = list(_index_by_deal.get(deal_id, []))
+        else:
+            ids = list(_local_workflows.keys())
+    return [row for wf_id in ids if (row := get_workflow(wf_id))]

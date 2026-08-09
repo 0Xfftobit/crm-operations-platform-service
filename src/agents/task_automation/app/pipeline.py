@@ -55,6 +55,7 @@ def run_pipeline_stages(
         }
 
     trigger_id = trigger_id or envelope["trigger_id"]
+    assert isinstance(trigger_id, str)
     enriched_payload = envelope["payload"]
 
     with trace_span("enrichment_resolver", deal_id=envelope["deal_id"]) as s2:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Any
 
 from app.core.config import get_settings
@@ -37,12 +38,15 @@ def _week_key(tenant: str, contact_id: str, sequence_id: str, now: datetime) -> 
 class FrequencyStore:
     def __init__(self) -> None:
         self._counts: dict[str, int] = {}
+        self._lock = RLock()
 
     def count_day(self, tenant: str, contact_id: str, sequence_id: str, now: datetime) -> int:
-        return self._counts.get(_day_key(tenant, contact_id, sequence_id, now), 0)
+        with self._lock:
+            return self._counts.get(_day_key(tenant, contact_id, sequence_id, now), 0)
 
     def count_week(self, tenant: str, contact_id: str, sequence_id: str, now: datetime) -> int:
-        return self._counts.get(_week_key(tenant, contact_id, sequence_id, now), 0)
+        with self._lock:
+            return self._counts.get(_week_key(tenant, contact_id, sequence_id, now), 0)
 
     def remaining(
         self,
@@ -56,32 +60,37 @@ class FrequencyStore:
         per_seq_day: int | None = None,
         per_seq_week: int | None = None,
     ) -> int:
-        # Global cap first.
-        global_remaining = min(
-            cap_day - self.count_day(tenant, contact_id, "__global__", now),
-            cap_week - self.count_week(tenant, contact_id, "__global__", now),
-        )
-        if per_seq_day is not None and per_seq_week is not None:
-            seq_remaining = min(
-                per_seq_day - self.count_day(tenant, contact_id, sequence_id, now),
-                per_seq_week - self.count_week(tenant, contact_id, sequence_id, now),
+        with self._lock:
+            # Global cap first.
+            global_remaining = min(
+                cap_day - self._counts.get(_day_key(tenant, contact_id, "__global__", now), 0),
+                cap_week - self._counts.get(_week_key(tenant, contact_id, "__global__", now), 0),
             )
-            return min(global_remaining, seq_remaining)
-        return global_remaining
+            if per_seq_day is not None and per_seq_week is not None:
+                day_key = _day_key(tenant, contact_id, sequence_id, now)
+                week_key = _week_key(tenant, contact_id, sequence_id, now)
+                seq_remaining = min(
+                    per_seq_day - self._counts.get(day_key, 0),
+                    per_seq_week - self._counts.get(week_key, 0),
+                )
+                return min(global_remaining, seq_remaining)
+            return global_remaining
 
     def increment(
         self, tenant: str, contact_id: str, sequence_id: str, now: datetime
     ) -> None:
-        sequences = ["__global__", sequence_id]
-        for seq in sequences:
-            for key in (
-                _day_key(tenant, contact_id, seq, now),
-                _week_key(tenant, contact_id, seq, now),
-            ):
-                self._counts[key] = self._counts.get(key, 0) + 1
+        with self._lock:
+            sequences = ["__global__", sequence_id]
+            for seq in sequences:
+                for key in (
+                    _day_key(tenant, contact_id, seq, now),
+                    _week_key(tenant, contact_id, seq, now),
+                ):
+                    self._counts[key] = self._counts.get(key, 0) + 1
 
     def clear(self) -> None:
-        self._counts.clear()
+        with self._lock:
+            self._counts.clear()
 
 
 class RedisFrequencyStore(FrequencyStore):
@@ -178,17 +187,20 @@ def _create_store() -> FrequencyStore:
 
 
 _store: FrequencyStore | None = None
+_store_lock = RLock()
 
 
 def get_store() -> FrequencyStore:
     global _store
-    if _store is None:
-        _store = _create_store()
-    return _store
+    with _store_lock:
+        if _store is None:
+            _store = _create_store()
+        return _store
 
 
 def reset_store() -> None:
     global _store
-    if _store is not None:
-        _store.clear()
-    _store = None
+    with _store_lock:
+        if _store is not None:
+            _store.clear()
+        _store = None

@@ -271,7 +271,9 @@ def train_model(
         joblib.dump({"model": model, "feature_names": feature_cols, "seed": seed}, artifact_path)
     else:
         # In-memory artifacts are stored on the repository object for tests.
-        get_model_repository()._artifacts[model_id] = {"model": model, "feature_names": feature_cols, "seed": seed}  # type: ignore[attr-defined]
+        get_model_repository().add_artifact(
+            model_id, {"model": model, "feature_names": feature_cols, "seed": seed}
+        )
 
     mv = ModelVersion(
         model_id=model_id,

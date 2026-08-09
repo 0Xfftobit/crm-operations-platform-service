@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -10,9 +11,12 @@ from app.service import process_event
 
 _consumed: list[dict[str, Any]] = []
 
+_lock = RLock()
+
 
 def reset_kafka() -> None:
-    _consumed.clear()
+    with _lock:
+        _consumed.clear()
 
 
 def consume_kafka_message(
@@ -49,9 +53,11 @@ def consume_kafka_message(
         record["error"] = str(exc)
         raise
     finally:
-        _consumed.append(record)
+        with _lock:
+            _consumed.append(record)
     return record
 
 
 def list_consumed(*, limit: int = 50) -> list[dict[str, Any]]:
-    return list(reversed(_consumed[-limit:]))
+    with _lock:
+        return list(reversed(_consumed[-limit:]))

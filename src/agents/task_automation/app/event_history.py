@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
 _events: list[dict[str, Any]] = []
 
+_lock = RLock()
+
 
 def reset_event_history() -> None:
-    _events.clear()
+    with _lock:
+        _events.clear()
 
 
 def record_event(*, topic: str, payload: dict[str, Any], source: str = "ingest") -> dict[str, Any]:
@@ -20,7 +24,8 @@ def record_event(*, topic: str, payload: dict[str, Any], source: str = "ingest")
         "source": source,
         "recorded_at": datetime.now(UTC).isoformat(),
     }
-    _events.append(row)
+    with _lock:
+        _events.append(row)
     return row
 
 
@@ -32,8 +37,10 @@ def list_events(
     limit: int = 5000,
 ) -> list[dict[str, Any]]:
     cutoff = datetime.now(UTC) - timedelta(days=days)
+    with _lock:
+        all_events = list(_events)
     rows = []
-    for e in _events:
+    for e in all_events:
         ts = datetime.fromisoformat(e["recorded_at"].replace("Z", "+00:00"))
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=UTC)

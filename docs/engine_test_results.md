@@ -17,7 +17,7 @@ cd src/agents/feedback_loop
 uv run pytest tests -v
 ```
 
-**Result:** `22 passed, 1 warning in 7.37s`
+**Result:** `25 passed, 1 warning in 7.64s`
 
 | Class | Scope | Count |
 |-------|-------|-------|
@@ -26,7 +26,7 @@ uv run pytest tests -v
 | `TestMetrics` | Precision, recall, F1, accuracy computation | 1 |
 | `TestDrift` | PSI computation and drift evaluation | 2 |
 | `TestRetraining` | Dataset assembly, model training, promotion, lineage, fairness gate | 3 |
-| `TestABTest` | Experiment creation, consistent allocation, power analysis, guardrail early stop | 3 |
+| `TestABTest` | Experiment creation, consistent allocation, power analysis, split rounding, guardrail fallback, exact drift window, guardrail early stop | 6 |
 | `TestSubtasks` | Performance retrain triggers, data validation, retraining event logs | 3 |
 
 ### 1.2 Performance Analytics System (`src/agents/performance_analytics`)
@@ -36,7 +36,7 @@ cd src/agents/performance_analytics
 uv run pytest tests -v
 ```
 
-**Result:** `34 passed, 1 warning in 4.75s`
+**Result:** `42 passed, 1 warning in 4.78s`
 
 | Class | Scope | Count |
 |-------|-------|-------|
@@ -53,6 +53,7 @@ uv run pytest tests -v
 | `TestAlerts` | Threshold alert | 1 |
 | `TestReports` | Scheduled reports, CSV/PDF export | 4 |
 | `TestABUplift` | Treatment vs control conversion lift with p-value | 1 |
+| `test_bug_audit` | ISO reconciliation, `_in_period` ISO, time-decay reference, attribution keys, concurrent repository safety | 7 |
 
 ### 1.3 Root Integration Tests
 
@@ -104,7 +105,7 @@ Raw JSON outputs:
 - First drift evaluation: `f1` PSI 4.3 → `alert=true`, `retrain_triggered=false`.
 - Second drift evaluation: `f1` PSI 4.3 → `alert=true`, `retrain_triggered=true`, `retrain_features=["f1"]`.
 
-The FLS unit suite still passes (`22 passed`).
+The FLS unit suite still passes (`25 passed`).
 
 ### 2.2 Performance Analytics System
 
@@ -160,8 +161,8 @@ cd src/agents/performance_analytics && uv run python /tmp/pas_real_data_test.py
 
 | Engine | Unit Tests | Real-Data Smoke Test | Status |
 |--------|------------|----------------------|--------|
-| Feedback Loop System | 22/22 passed | Capture, metrics, drift, retrain, lineage, A/B promotion all operational | ✅ Ready for feedback loop |
-| Performance Analytics System | 34/34 passed | KPIs, funnel, scorecards, attribution, reconciliation, alerts, CSV export all operational | ✅ Ready for feedback loop |
+| Feedback Loop System | 25/25 passed | Capture, metrics, drift, retrain, lineage, A/B promotion all operational | ✅ Ready for feedback loop |
+| Performance Analytics System | 42/42 passed | KPIs, funnel, scorecards, attribution, reconciliation, alerts, CSV export all operational, bug-audit ISO/time-decay/locking | ✅ Ready for feedback loop |
 
 Both engines satisfy the ticket requirements implemented in P0–P3. The FLS drift-to-retrain escalation bug was fixed in `src/agents/feedback_loop/app/drift.py` and verified with the unit suite and the real-data smoke test.
 
@@ -205,16 +206,18 @@ cd src/agents/follow_up_sequences
 uv run pytest tests -v
 ```
 
-**Result:** `40 passed, 1 warning in 0.71s`
+**Result:** `50 passed, 1 warning in 0.81s`
 
 | Class / Module | Scope | Count |
 |----------------|-------|-------|
 | `test_api` | API key auth, enroll/tick, sequence lookup, engagement reply, opt-out, stage triggers, analytics | 7 |
-| `test_guardrails` | Quiet hours, timezone fallback, consent/DNC/frequency-cap, branching | 12 |
+| `test_guardrails` | Quiet hours, timezone fallback, consent/DNC/frequency-cap, branching, duration/branch primitives | 14 |
 | `test_health` | Health, readiness, OpenAPI, CORS, settings | 5 |
-| `test_pipeline` | Personalization, quiet hours, consent, reply/convert/opt-out, duplicate enrollment, frequency cap, branching | 16 |
+|| `test_cross_agent` | CMS precheck client sends `X-API-Key` and `X-Request-ID` | 1 |
+|| `test_bug_audit` | UTC frequency keys, thread-safe `FrequencyStore`/`events`/`notifications`/`providers` | 5 |
+| `test_pipeline` | Personalization, quiet hours, consent, reply/convert/opt-out, duplicate enrollment, frequency cap, branching, lead-scored trigger, bounce/complaint suppression, owner notification | 18 |
 
-**Fix applied:** `test_pipeline.py::test_branch_no_open_takes_path_b_after_window` failed because `_ledger` in `src/agents/follow_up_sequences/app/service.py` stamped `sent_at` with `_now()` (wall-clock time) instead of the deterministic `now` passed through the pipeline. This broke elapsed-time branch evaluation when the test used a frozen test clock. Updated `_ledger` to accept and use an optional `now` parameter and wired it through all `_process_send` call sites. Result: `40 passed`.
+**Fix applied:** `test_pipeline.py::test_branch_no_open_takes_path_b_after_window` failed because `_ledger` in `src/agents/follow_up_sequences/app/service.py` stamped `sent_at` with `_now()` (wall-clock time) instead of the deterministic `now` passed through the pipeline. This broke elapsed-time branch evaluation when the test used a frozen test clock. Updated `_ledger` to accept and use an optional `now` parameter and wired it through all `_process_send` call sites. Result: `50 passed`.
 
 ### 5.3 Task Automation Engine (`src/agents/task_automation`)
 
@@ -223,7 +226,7 @@ cd src/agents/task_automation
 uv run pytest tests -v
 ```
 
-**Result:** `69 passed, 1 skipped, 1 warning in 20.93s`
+**Result:** `78 passed, 1 skipped, 1 warning in 5.93s`
 
 | Class / Module | Scope | Count |
 |----------------|-------|-------|
@@ -271,10 +274,10 @@ In addition to the unit/functional suites, each new agent was exercised end-to-e
 
 | Engine | Unit Tests | Smoke / Real-Data Test | Status |
 |--------|------------|------------------------|--------|
-| Feedback Loop System | 22/22 passed | Capture, metrics, drift, retrain, lineage, A/B promotion operational | ✅ Ready |
-| Performance Analytics System | 34/34 passed | KPIs, funnel, scorecards, attribution, reconciliation, alerts, CSV export operational | ✅ Ready |
+| Feedback Loop System | 25/25 passed | Capture, metrics, drift, retrain, lineage, A/B promotion operational | ✅ Ready |
+| Performance Analytics System | 42/42 passed | KPIs, funnel, scorecards, attribution, reconciliation, alerts, CSV export operational, bug-audit ISO/time-decay/locking | ✅ Ready |
 | Compliance Monitor System | 106/106 passed | Unit suite + API smoke: precheck, audit, fairness, disclosures, PII, retention, rule workflow | ✅ Ready |
-| Follow-up Sequences Engine | 40/40 passed | Unit suite + API smoke: enrollment, guardrails, branching, reply/convert/opt-out, frequency cap, analytics | ✅ Ready |
-| Task Automation Engine | 69 passed, 1 skipped | Unit suite + API smoke: rule engine, stage-driven task, business hours, dashboard, blast radius | ✅ Ready |
+| Follow-up Sequences Engine | 50/50 passed | Unit suite + API smoke: enrollment, guardrails, branching, reply/convert/opt-out, frequency cap, bug-audit timezone/locking, analytics | ✅ Ready |
+| Task Automation Engine | 78 passed, 1 skipped | Unit suite + API smoke: rule engine, stage-driven task, business hours, dashboard, blast radius, bug-audit trigger-id/locking | ✅ Ready |
 
 All five engines now have passing unit/functional test suites and realistic API smoke tests. Two small bugs were identified and fixed during testing: FLS drift escalation (previous thread) and the FUS `sent_at` branch-timing bug, plus the CMS missing OTel test dependency. No external LLM or data-provider API keys are required for the current in-memory/stub implementations.

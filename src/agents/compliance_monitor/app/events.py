@@ -4,6 +4,7 @@ Produced ``compliance.alert / case.opened / signal`` events are published back t
 in an in-process audit-visible log here) for Engine-8 correlation + analytics.
 """
 from datetime import UTC, datetime
+from threading import RLock
 
 import structlog
 
@@ -14,11 +15,17 @@ EVENT_CASE_OPENED = "compliance.case.opened"
 EVENT_CASE_UPDATED = "compliance.case.updated"
 EVENT_SIGNAL = "compliance.signal"          # to Engine 8
 
+_lock = RLock()
 _events: list[dict] = []
 
 
 def publish(event_type: str, payload: dict) -> None:
-    _events.append({"type": event_type, "payload": payload, "at": datetime.now(UTC).isoformat()})
+    with _lock:
+        _events.append({
+            "type": event_type,
+            "payload": payload,
+            "at": datetime.now(UTC).isoformat(),
+        })
     logger.info("event", event_type=event_type)
     # Mirror onto the Kafka bus when the producer is running (no-op otherwise).
     from app import kafka_bus
@@ -26,9 +33,11 @@ def publish(event_type: str, payload: dict) -> None:
 
 
 def get_events(*, event_type: str | None = None, limit: int = 200) -> list[dict]:
-    items = [e for e in _events if event_type is None or e["type"] == event_type]
-    return list(reversed(items[-limit:]))
+    with _lock:
+        items = [e for e in _events if event_type is None or e["type"] == event_type]
+        return list(reversed(items[-limit:]))
 
 
 def reset_events() -> None:
-    _events.clear()
+    with _lock:
+        _events.clear()

@@ -22,6 +22,10 @@ This directory contains the product, architecture, implementation, and testing d
 | Performance Analytics System | [implementation_status_pas.md](implementation_status_pas.md) |
 | Task Automation Engine | [implementation_status_tas.md](implementation_status_tas.md) |
 
+## P4 Promotion / GA Launch
+
+- [P4_BLOCKERS.md](P4_BLOCKERS.md) — remaining blockers that must be resolved before production hardening and GA launch.
+
 ## Testing
 
 - [TESTING.md](TESTING.md) — how to run each agent's test suite, lint/format commands, and CI notes.

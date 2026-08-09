@@ -34,6 +34,11 @@ P0–P3 of the FLS ticket, plus the CEAAPSS-559 (Model Retraining) and CEAAPSS-5
 - **CEAAPSS-559**: manual/scheduled/performance/drift retrain triggers, dataset validation (row count, class balance, missing values), retraining history, event-log lifecycle notifications.
 - **CEAAPSS-560**: consistent-hash variant allocation, power-analysis minimum sample size, configurable p-value threshold, guardrail metric + early stopping, one-click winner promotion.
 
+## Latest P4 Hardening
+
+- Bug-audit fixes: A/B split sums to 100%, guardrail fallback only fires when no guardrail metric is configured, SHA-256 variant hashing, `timedelta` drift window, `joblib` serialization, `_precision_recall_f1` 4-tuple return type.
+- All in-memory repositories plus the drift reference store now use `threading.RLock()`.
+
 ## Architecture
 
 ```
@@ -200,7 +205,7 @@ The agent has an isolated pytest suite under `tests/`:
 
 ```bash
 cd src/agents/feedback_loop
-PYTHONPATH=. pytest tests -q
+PYTHONPATH=. pytest tests -q          # 25 passed, 1 warning
 ```
 
 It also supports linting and formatting via `ruff`:

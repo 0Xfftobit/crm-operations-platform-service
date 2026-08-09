@@ -582,7 +582,7 @@ def audit_purge() -> dict:
     if not coldstore.enabled():
         return {"purged": 0, "reason": "cold_store_disabled"}
     audit_cold_tier()                       # ensure the aged range is preserved before any deletion
-    cutoff = _now() - timedelta(days=settings.audit_retention_years * 365)
+    cutoff = privacy._add_years(_now(), -settings.audit_retention_years)
     max_anchor = audit.max_anchored_seq()
     archived = coldstore.archived_seqs()
     wm = audit.purge_watermark()["purged_through_seq"]

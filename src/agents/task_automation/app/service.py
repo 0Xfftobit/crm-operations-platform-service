@@ -58,6 +58,8 @@ def _persist_and_emit(
     created_tasks: list[dict[str, Any]] = []
     executed_actions: list[dict[str, Any]] = []
     trigger_id = trigger_id or result.get("trigger_id")
+    assert trigger_id is not None
+    trigger_id = str(trigger_id)
 
     for spec in result.get("created_tasks") or []:
         task = store.create_crm_task(
@@ -299,6 +301,7 @@ def process_event(
     enriched = pipeline_result["enriched_payload"]
     lead_id = pipeline_result["lead_id"]
     trigger_id = pipeline_result["trigger_id"]
+    assert isinstance(trigger_id, str)
     evaluation = pipeline_result["evaluation"]
     tenant_id = tenant_id or enriched.get("tenant_id")
 

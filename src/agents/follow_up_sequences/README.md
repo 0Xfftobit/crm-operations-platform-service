@@ -31,6 +31,12 @@ via the gateways):
 - Publishes `sequence.enrolled` / `outreach.sent` / `outreach.failed` / `sequence.stopped` /
   `sequence.completed` (FR/§6).
 
+## Latest P4 Hardening
+
+- Bug-audit fixes: per-sequence frequency caps, Twilio/SendGrid/WhatsApp Business providers with mock fallback, 5-minute pre-send idempotency guard, `Literal` state validation, `Field(default_factory=dict)` for mutable defaults.
+- `SuppressionEvent` + `POST /api/v1/webhooks/suppression` permanently suppress contacts and stop active enrollments.
+- Repository methods, in-process event log, notification log, mock provider send log, and `FrequencyStore` counters are protected with `threading.RLock()`.
+
 > The `/scheduler/tick` endpoint is the in-process stand-in for **Temporal** durable timers — it
 > advances every due enrollment. Temporal, Kafka, Redis frequency counters, and real channel
 > providers are deferred infra behind these interfaces.
@@ -44,7 +50,7 @@ via the gateways):
 ## Run locally
 ```bash
 uv sync
-uv run pytest -q
+uv run pytest -q         # 50 passed, 1 warning
 make run                 # API on http://127.0.0.1:8008 (reload)
 ```
 Open **http://127.0.0.1:8008/docs**. Health: `/api/v1/health`, readiness: `/api/v1/ready`.

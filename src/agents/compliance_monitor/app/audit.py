@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 from datetime import UTC, datetime
+from threading import RLock
 
 from app.core.config import get_settings
 from app.domain.models import AuditEntry
@@ -22,6 +23,7 @@ _HASHED = ("seq", "event_id", "occurred_at", "actor_type", "actor_id", "event_ty
            "session_id")
 
 # In-memory backend (default). SQL backend lives in app.db.ledger.
+_lock = RLock()
 _entries: list[AuditEntry] = []
 _anchors: list[dict] = []
 # Purge watermark: the seq purged through + the carry hash the chain resumes from after a purge.
@@ -61,7 +63,8 @@ def _watermark() -> tuple[int, str]:
     """(purged_through_seq, carry_hash) — (0, genesis) when nothing has been purged."""
     if _use_sql():
         return _ledger().get_watermark()
-    return _purge_seq, _purge_carry
+    with _lock:
+        return _purge_seq, _purge_carry
 
 
 def append(**fields) -> AuditEntry:
@@ -70,27 +73,34 @@ def append(**fields) -> AuditEntry:
     ``seq`` continues from the highest existing seq (or the purge watermark if the ledger has been
     purged empty), and ``prev_hash`` chains from the last entry — or the carry hash left by a purge
     — so the chain stays continuous and verifiable even after aged ranges are purged."""
-    last = _ledger().last() if _use_sql() else (_entries[-1] if _entries else None)
-    if last is not None:
-        prev_hash, seq = last.entry_hash, last.seq + 1
-    else:
-        purged_seq, carry = _watermark()
-        prev_hash, seq = carry, purged_seq + 1
-    entry = AuditEntry(seq=seq, prev_hash=prev_hash, entry_hash="",
-                       occurred_at=fields.pop("occurred_at", None) or datetime.now(UTC), **fields)
-    entry.entry_hash = _hash(prev_hash, _core(entry))
-    if _use_sql():
-        _ledger().add(entry)
-    else:
-        _entries.append(entry)
+    with _lock:
+        last = _ledger().last() if _use_sql() else (_entries[-1] if _entries else None)
+        if last is not None:
+            prev_hash, seq = last.entry_hash, last.seq + 1
+        else:
+            purged_seq, carry = _watermark()
+            prev_hash, seq = carry, purged_seq + 1
+        entry = AuditEntry(
+            seq=seq,
+            prev_hash=prev_hash,
+            entry_hash="",
+            occurred_at=fields.pop("occurred_at", None) or datetime.now(UTC),
+            **fields
+        )
+        entry.entry_hash = _hash(prev_hash, _core(entry))
+        if _use_sql():
+            _ledger().add(entry)
+        else:
+            _entries.append(entry)
     _mirror_worm(entry)
     return entry
 
 
 def get(seq: int) -> AuditEntry | None:
-    if _use_sql():
-        return _ledger().get(seq)
-    return next((e for e in _entries if e.seq == seq), None)
+    with _lock:
+        if _use_sql():
+            return _ledger().get(seq)
+        return next((e for e in _entries if e.seq == seq), None)
 
 
 def search(
@@ -98,25 +108,28 @@ def search(
     engine: str | None = None, event_id: str | None = None, frm: datetime | None = None,
     to: datetime | None = None, limit: int = 500,
 ) -> list[AuditEntry]:
-    if _use_sql():
-        return _ledger().search(entity_id=entity_id, actor_id=actor_id, event_type=event_type,
-                                engine_name=engine, event_id=event_id, frm=frm, to=to, limit=limit)
-    out = _entries
-    if entity_id:
-        out = [e for e in out if e.entity_id == entity_id]
-    if actor_id:
-        out = [e for e in out if e.actor_id == actor_id]
-    if event_type:
-        out = [e for e in out if e.event_type == event_type]
-    if engine:
-        out = [e for e in out if e.engine == engine]
-    if event_id:
-        out = [e for e in out if e.event_id == event_id]
-    if frm:
-        out = [e for e in out if e.occurred_at >= frm]
-    if to:
-        out = [e for e in out if e.occurred_at <= to]
-    return out[-limit:]
+    with _lock:
+        if _use_sql():
+            return _ledger().search(
+                entity_id=entity_id, actor_id=actor_id, event_type=event_type,
+                engine_name=engine, event_id=event_id, frm=frm, to=to, limit=limit,
+            )
+        out = _entries
+        if entity_id:
+            out = [e for e in out if e.entity_id == entity_id]
+        if actor_id:
+            out = [e for e in out if e.actor_id == actor_id]
+        if event_type:
+            out = [e for e in out if e.event_type == event_type]
+        if engine:
+            out = [e for e in out if e.engine == engine]
+        if event_id:
+            out = [e for e in out if e.event_id == event_id]
+        if frm:
+            out = [e for e in out if e.occurred_at >= frm]
+        if to:
+            out = [e for e in out if e.occurred_at <= to]
+        return out[-limit:]
 
 
 def verify_chain() -> dict:
@@ -124,14 +137,15 @@ def verify_chain() -> dict:
 
     Verification resumes from the purge carry hash, so a ledger with aged ranges purged still
     verifies end-to-end (the purged ranges remain provable via their retained Merkle anchors)."""
-    entries = all_entries()
-    purged_seq, prev = _watermark()
-    for e in entries:
-        if e.prev_hash != prev or _hash(e.prev_hash, _core(e)) != e.entry_hash:
-            return {"verified": False, "entries": len(entries), "broken_at": e.seq}
-        prev = e.entry_hash
-    return {"verified": True, "entries": len(entries), "broken_at": None,
-            "purged_through_seq": purged_seq}
+    with _lock:
+        entries = all_entries()
+        purged_seq, prev = _watermark()
+        for e in entries:
+            if e.prev_hash != prev or _hash(e.prev_hash, _core(e)) != e.entry_hash:
+                return {"verified": False, "entries": len(entries), "broken_at": e.seq}
+            prev = e.entry_hash
+        return {"verified": True, "entries": len(entries), "broken_at": None,
+                "purged_through_seq": purged_seq}
 
 
 def export_csv(entries: list[AuditEntry]) -> str:
@@ -151,37 +165,42 @@ def export_package(entries: list[AuditEntry]) -> dict:
 
 
 def all_entries() -> list[AuditEntry]:
-    if _use_sql():
-        return _ledger().all_entries()
-    return list(_entries)
+    with _lock:
+        if _use_sql():
+            return _ledger().all_entries()
+        return list(_entries)
 
 
 # ── Merkle anchors ─────────────────────────────────────────────────────────
 def record_anchor(*, seq_from: int, seq_to: int, merkle_root: str, anchored_at: datetime,
                   external_ref: str = "") -> None:
-    if _use_sql():
-        _ledger().add_anchor(seq_from=seq_from, seq_to=seq_to, merkle_root=merkle_root,
-                             anchored_at=anchored_at, external_ref=external_ref)
-    else:
-        _anchors.append({"id": len(_anchors) + 1, "seq_from": seq_from, "seq_to": seq_to,
-                         "merkle_root": merkle_root, "anchored_at": anchored_at.isoformat(),
-                         "external_ref": external_ref})
+    with _lock:
+        if _use_sql():
+            _ledger().add_anchor(seq_from=seq_from, seq_to=seq_to, merkle_root=merkle_root,
+                                 anchored_at=anchored_at, external_ref=external_ref)
+        else:
+            _anchors.append({"id": len(_anchors) + 1, "seq_from": seq_from, "seq_to": seq_to,
+                             "merkle_root": merkle_root, "anchored_at": anchored_at.isoformat(),
+                             "external_ref": external_ref})
 
 
 def get_anchors() -> list[dict]:
-    if _use_sql():
-        return _ledger().anchors()
-    return list(_anchors)
+    with _lock:
+        if _use_sql():
+            return _ledger().anchors()
+        return list(_anchors)
 
 
 def max_anchored_seq() -> int:
     """Highest seq covered by any Merkle anchor (the purge safety boundary)."""
-    return max((a["seq_to"] for a in get_anchors()), default=0)
+    with _lock:
+        return max((a["seq_to"] for a in get_anchors()), default=0)
 
 
 def purge_watermark() -> dict:
-    seq, carry = _watermark()
-    return {"purged_through_seq": seq, "carry_hash": carry}
+    with _lock:
+        seq, carry = _watermark()
+        return {"purged_through_seq": seq, "carry_hash": carry}
 
 
 def purge_through(seq: int) -> dict:
@@ -191,25 +210,27 @@ def purge_through(seq: int) -> dict:
     Merkle-anchored (tamper-evidence retained). The carry hash is the purged head entry's hash, so
     the chain over the remaining entries still verifies."""
     global _purge_seq, _purge_carry
-    head = get(seq)
-    if head is None:
-        return {"purged": 0, **purge_watermark()}
-    carry = head.entry_hash
-    if _use_sql():
-        removed = _ledger().delete_through(seq)
-        _ledger().set_watermark(seq, carry)
-    else:
-        before = len(_entries)
-        _entries[:] = [e for e in _entries if e.seq > seq]
-        removed = before - len(_entries)
-        _purge_seq, _purge_carry = seq, carry
-    return {"purged": removed, "purged_through_seq": seq, "carry_hash": carry}
+    with _lock:
+        head = get(seq)
+        if head is None:
+            return {"purged": 0, **purge_watermark()}
+        carry = head.entry_hash
+        if _use_sql():
+            removed = _ledger().delete_through(seq)
+            _ledger().set_watermark(seq, carry)
+        else:
+            before = len(_entries)
+            _entries[:] = [e for e in _entries if e.seq > seq]
+            removed = before - len(_entries)
+            _purge_seq, _purge_carry = seq, carry
+        return {"purged": removed, "purged_through_seq": seq, "carry_hash": carry}
 
 
 def reset_ledger() -> None:
     global _purge_seq, _purge_carry
-    _entries.clear()
-    _anchors.clear()
-    _purge_seq, _purge_carry = 0, _GENESIS
-    if _use_sql():
-        _ledger().clear()
+    with _lock:
+        _entries.clear()
+        _anchors.clear()
+        _purge_seq, _purge_carry = 0, _GENESIS
+        if _use_sql():
+            _ledger().clear()

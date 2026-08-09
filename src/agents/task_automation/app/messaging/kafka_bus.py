@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -40,11 +41,14 @@ TOPIC_MAP: dict[str, str] = {
 _kafka_log: list[dict[str, Any]] = []
 _consumer_lag: int = 0
 
+_lock = RLock()
+
 
 def reset_kafka_bus() -> None:
     global _consumer_lag
-    _kafka_log.clear()
-    _consumer_lag = 0
+    with _lock:
+        _kafka_log.clear()
+        _consumer_lag = 0
 
 
 def canonical_topic(topic: str) -> str:
@@ -74,33 +78,38 @@ def publish_kafka(topic: str, payload: dict[str, Any], *, key: str | None = None
         "published_at": datetime.now(UTC).isoformat(),
         "transport": "in_process_bus",
     }
-    _kafka_log.append(row)
+    with _lock:
+        _kafka_log.append(row)
     return row
 
 
 def consume_kafka(*, topic: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-    items = _kafka_log
+    with _lock:
+        items = list(_kafka_log)
     if topic:
-        items = [m for m in _kafka_log if m["topic"] == topic or m.get("source_topic") == topic]
+        items = [m for m in items if m["topic"] == topic or m.get("source_topic") == topic]
     return list(reversed(items[-limit:]))
 
 
 def consumer_lag() -> int:
-    return _consumer_lag
+    with _lock:
+        return _consumer_lag
 
 
 def set_consumer_lag(lag: int) -> None:
     global _consumer_lag
-    _consumer_lag = max(0, lag)
+    with _lock:
+        _consumer_lag = max(0, lag)
 
 
 def bus_stats() -> dict[str, Any]:
-    topics: dict[str, int] = {}
-    for m in _kafka_log:
-        topics[m["topic"]] = topics.get(m["topic"], 0) + 1
-    return {
-        "messages_total": len(_kafka_log),
-        "consumer_lag": _consumer_lag,
-        "topics": topics,
-        "transport": "in_process_bus",
-    }
+    with _lock:
+        topics: dict[str, int] = {}
+        for m in _kafka_log:
+            topics[m["topic"]] = topics.get(m["topic"], 0) + 1
+        return {
+            "messages_total": len(_kafka_log),
+            "consumer_lag": _consumer_lag,
+            "topics": topics,
+            "transport": "in_process_bus",
+        }

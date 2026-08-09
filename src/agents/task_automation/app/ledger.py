@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -11,6 +12,8 @@ from app.persistence.db import persist_ledger_entry as persist_ledger_db
 
 _ledger: list[dict[str, Any]] = []
 _ledger_keys: set[tuple[str | None, str | None, str | None]] = set()
+
+_lock = RLock()
 
 
 def _idempotency_tuple(
@@ -50,10 +53,12 @@ def append_ledger_entry(
     detail: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     idem_key = _idempotency_tuple(trigger_id, rule_id, action_key)
-    if idem_key and idem_key in _ledger_keys:
-        existing = _find_in_memory(trigger_id, rule_id, action_key)
-        if existing:
-            return {**existing, "outcome": "deduped", "duplicate": True}
+
+    with _lock:
+        if idem_key and idem_key in _ledger_keys:
+            existing = _find_in_memory(trigger_id, rule_id, action_key)
+            if existing:
+                return {**existing, "outcome": "deduped", "duplicate": True}
 
     inp = inputs or {}
     entry = {
@@ -78,45 +83,58 @@ def append_ledger_entry(
     }
 
     persist_result = persist_ledger_db(entry)
-    if persist_result.get("duplicate"):
-        existing = persist_result.get("existing") or _find_in_memory(trigger_id, rule_id, action_key)
-        if existing:
-            return {**existing, "outcome": "deduped", "duplicate": True, "ledger_id": persist_result["ledger_id"]}
-        entry["outcome"] = "deduped"
-        entry["duplicate"] = True
-        entry["ledger_id"] = persist_result["ledger_id"]
 
-    if idem_key:
-        _ledger_keys.add(idem_key)
-    _ledger.append(entry)
+    with _lock:
+        if idem_key and idem_key in _ledger_keys:
+            existing = _find_in_memory(trigger_id, rule_id, action_key)
+            if existing:
+                return {**existing, "outcome": "deduped", "duplicate": True, "ledger_id": persist_result["ledger_id"]}
+
+        if persist_result.get("duplicate"):
+            existing = persist_result.get("existing") or _find_in_memory(trigger_id, rule_id, action_key)
+            if existing:
+                result: dict[str, Any] = {**existing, "outcome": "deduped", "duplicate": True, "ledger_id": persist_result["ledger_id"]}
+            else:
+                entry["outcome"] = "deduped"
+                entry["duplicate"] = True
+                entry["ledger_id"] = persist_result["ledger_id"]
+                result = entry
+        else:
+            result = entry
+
+        if idem_key:
+            _ledger_keys.add(idem_key)
+        _ledger.append(result)
 
     publish_kafka(
         "action.ledger.appended",
         {
-            "ledger_id": entry["ledger_id"],
+            "ledger_id": result["ledger_id"],
             "action_type": action_type,
             "lead_id": lead_id,
             "rule_id": rule_id,
-            "outcome": entry["outcome"],
+            "outcome": result["outcome"],
         },
         key=lead_id,
     )
-    return entry
+    return result
 
 
 def list_ledger(*, lead_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
-    rows = _ledger
+    with _lock:
+        rows = list(_ledger)
     if lead_id:
         rows = [e for e in rows if e.get("lead_id") == lead_id]
     return sorted(rows, key=lambda e: e["recorded_at"], reverse=True)[:limit]
 
 
 def ledger_completeness() -> dict[str, Any]:
-    total = len(_ledger)
-    with_provenance = sum(
-        1 for e in _ledger
-        if e.get("provenance") and e.get("rule_id") and e.get("inputs_hash")
-    )
+    with _lock:
+        total = len(_ledger)
+        with_provenance = sum(
+            1 for e in _ledger
+            if e.get("provenance") and e.get("rule_id") and e.get("inputs_hash")
+        )
     return {
         "total_entries": total,
         "with_full_provenance": with_provenance,
@@ -125,5 +143,6 @@ def ledger_completeness() -> dict[str, Any]:
 
 
 def reset_ledger() -> None:
-    _ledger.clear()
-    _ledger_keys.clear()
+    with _lock:
+        _ledger.clear()
+        _ledger_keys.clear()

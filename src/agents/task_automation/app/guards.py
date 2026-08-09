@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from threading import RLock
 from typing import Any
 
 from app.core.config import get_settings
@@ -10,10 +11,13 @@ from app.persistence import redis_store
 _trigger_chain: dict[str, list[str]] = {}
 _canary_counters: dict[str, int] = {}
 
+_lock = RLock()
+
 
 def reset_guards() -> None:
-    _trigger_chain.clear()
-    _canary_counters.clear()
+    with _lock:
+        _trigger_chain.clear()
+        _canary_counters.clear()
 
 
 def check_action_budget(*, lead_id: str, increment: int = 1) -> tuple[bool, str | None]:
@@ -33,18 +37,20 @@ def check_loop_guard(*, trigger_id: str, rule_id: str, lead_id: str) -> tuple[bo
     """Detect action→event→rule cycles within a trigger chain."""
     settings = get_settings()
     chain_key = f"{lead_id}:{trigger_id}"
-    chain = _trigger_chain.setdefault(chain_key, [])
     fingerprint = f"{rule_id}"
-    if fingerprint in chain:
-        return False, "rule_cycle_detected"
-    if len(chain) >= settings.max_rule_chain_depth:
-        return False, "rule_chain_depth_exceeded"
-    chain.append(fingerprint)
+    with _lock:
+        chain = _trigger_chain.setdefault(chain_key, [])
+        if fingerprint in chain:
+            return False, "rule_cycle_detected"
+        if len(chain) >= settings.max_rule_chain_depth:
+            return False, "rule_chain_depth_exceeded"
+        chain.append(fingerprint)
     return True, None
 
 
 def clear_trigger_chain(*, trigger_id: str, lead_id: str) -> None:
-    _trigger_chain.pop(f"{lead_id}:{trigger_id}", None)
+    with _lock:
+        _trigger_chain.pop(f"{lead_id}:{trigger_id}", None)
 
 
 def canary_eligible(*, rule: dict[str, Any], lead_id: str) -> tuple[bool, str | None]:
@@ -67,8 +73,10 @@ def _canary_bucket(rule_id: str, lead_id: str) -> float:
 
 
 def record_canary_exposure(rule_id: str) -> None:
-    _canary_counters[rule_id] = _canary_counters.get(rule_id, 0) + 1
+    with _lock:
+        _canary_counters[rule_id] = _canary_counters.get(rule_id, 0) + 1
 
 
 def canary_stats() -> dict[str, Any]:
-    return {"exposures_by_rule": dict(_canary_counters)}
+    with _lock:
+        return {"exposures_by_rule": dict(_canary_counters)}

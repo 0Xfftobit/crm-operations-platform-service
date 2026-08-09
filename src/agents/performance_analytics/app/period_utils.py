@@ -45,11 +45,36 @@ def _parse_datetime(s: str) -> datetime | None:
     return None
 
 
-def _parse_bounds(period: str | None) -> tuple[datetime, datetime] | None:
+def _iso_duration(period: str) -> timedelta | None:
+    """Parse a simple ISO-8601 duration like P1D / P7W / P30D / P1M / P1Y."""
+    m = re.fullmatch(r"P(\d+)([YMWD])", period)
+    if not m:
+        return None
+    n = int(m.group(1))
+    unit = m.group(2)
+    if unit == "Y":
+        return timedelta(days=n * 365)
+    if unit == "M":
+        return timedelta(days=n * 30)
+    if unit == "W":
+        return timedelta(weeks=n)
+    if unit == "D":
+        return timedelta(days=n)
+    return None
+
+
+def _parse_bounds(period: str | None, now: datetime | None = None) -> tuple[datetime, datetime] | None:
     """Return inclusive start/end for a period string, or None if it is a bucket keyword."""
     if not period:
         return None
     if _parse_grain(period):
+        return None
+
+    if re.fullmatch(r"P\d+[YMWD]", period):
+        reference = now or datetime.now(UTC)
+        delta = _iso_duration(period)
+        if delta:
+            return (reference - delta, reference)
         return None
 
     if "/" in period:
@@ -95,13 +120,13 @@ def _period_bucket(dt: datetime, period: str | None) -> str:
     return ""
 
 
-def _in_period(dt: datetime, period: str | None) -> bool:
+def _in_period(dt: datetime, period: str | None, *, now: datetime | None = None) -> bool:
     if not period:
         return True
     if _parse_grain(period):
         # Bucket keyword means "all rows" at this grain; grouping happens elsewhere.
         return True
-    bounds = _parse_bounds(period)
+    bounds = _parse_bounds(period, now=now)
     if bounds:
         return bounds[0] <= dt <= bounds[1]
     # Unknown period expression — include all data to avoid misleading empty results.

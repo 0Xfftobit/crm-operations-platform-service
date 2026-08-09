@@ -1,6 +1,7 @@
 """Redis-backed idempotency store with in-memory fallback (§7)."""
 from __future__ import annotations
 
+from threading import RLock
 from typing import Any
 
 from app.core.config import get_settings
@@ -11,17 +12,21 @@ _backend: StoreBackend | None = None
 _fallback: MemoryStore = MemoryStore()
 _using_fallback: bool = False
 
+_lock = RLock()
+
 
 def reset_redis_store() -> None:
     global _backend, _using_fallback
-    _fallback.reset()
-    if isinstance(_backend, RedisClient):
+    with _lock:
+        _fallback.reset()
+        backend = _backend
+        _backend = None
+        _using_fallback = False
+    if isinstance(backend, RedisClient):
         try:
-            _backend.flush_db()
+            backend.flush_db()
         except Exception:
             pass
-    _backend = None
-    _using_fallback = False
 
 
 def _loop_ttl_seconds() -> int:
@@ -34,30 +39,36 @@ def _ttl_seconds() -> int:
 
 def _resolve_backend() -> StoreBackend:
     global _backend, _using_fallback
-    if _backend is not None:
-        return _backend
+    with _lock:
+        if _backend is not None:
+            return _backend
+        settings = get_settings()
 
-    settings = get_settings()
+    client = None
     if settings.idempotency_backend == "redis":
         client = connect_redis(settings.redis_url)
+
+    with _lock:
+        if _backend is not None:
+            return _backend
         if client is not None:
             _backend = client
             _using_fallback = False
-            return _backend
-
-    _backend = _fallback
-    _using_fallback = True
-    return _backend
+        else:
+            _backend = _fallback
+            _using_fallback = True
+        return _backend
 
 
 def backend_info() -> dict[str, Any]:
     settings = get_settings()
     backend = _resolve_backend()
-    label = "memory"
-    if isinstance(backend, RedisClient):
-        label = "redis"
-    elif _using_fallback and settings.idempotency_backend == "redis":
-        label = "memory_fallback"
+    with _lock:
+        label = "memory"
+        if isinstance(backend, RedisClient):
+            label = "redis"
+        elif _using_fallback and settings.idempotency_backend == "redis":
+            label = "memory_fallback"
     return backend.stats(backend_label=label, ttl_days=settings.idempotency_ttl_days)
 
 

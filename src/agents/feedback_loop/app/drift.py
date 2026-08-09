@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from threading import RLock
 from typing import Any
 
 import numpy as np
@@ -14,31 +15,42 @@ from app.repositories import get_drift_repository, get_prediction_repository
 
 # Engine -> feature -> list of reference values
 _reference_distributions: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+_lock = RLock()
 
 
 def reset_drift_references() -> None:
-    _reference_distributions.clear()
+    with _lock:
+        _reference_distributions.clear()
 
 
 def set_reference(engine_name: str, feature: str, values: list[float]) -> None:
     """Set the reference distribution for a feature (typically from training data)."""
-    _reference_distributions[engine_name][feature] = [float(v) for v in values]
+    with _lock:
+        _reference_distributions[engine_name][feature] = [float(v) for v in values]
 
 
-def set_reference_from_predictions(engine_name: str, predictions: list[Any], features: list[str] | None = None) -> None:
+def set_reference_from_predictions(
+    engine_name: str,
+    predictions: list[Any],
+    features: list[str] | None = None,
+) -> None:
     """Bootstrap a reference distribution from the features of the first predictions."""
     if features is None:
         features = _discover_features(predictions)
-    for feature in features:
-        values = [
-            float(p.features[feature]) for p in predictions if feature in p.features and _is_number(p.features[feature])
-        ]
-        if values:
-            set_reference(engine_name, feature, values)
+    with _lock:
+        for feature in features:
+            values = [
+                float(p.features[feature])
+                for p in predictions
+                if feature in p.features and _is_number(p.features[feature])
+            ]
+            if values:
+                set_reference(engine_name, feature, values)
 
 
 def get_reference(engine_name: str, feature: str) -> list[float]:
-    return _reference_distributions.get(engine_name, {}).get(feature, [])
+    with _lock:
+        return _reference_distributions.get(engine_name, {}).get(feature, [])
 
 
 def _is_number(v: Any) -> bool:

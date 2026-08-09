@@ -11,6 +11,7 @@ working, honouring the platform's graceful-degradation convention.
 """
 import asyncio
 import json
+from threading import RLock
 
 import structlog
 
@@ -18,6 +19,7 @@ from app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
+_lock = RLock()
 _producer = None
 _loop = None          # the app's main event loop (for producing from worker threads)
 
@@ -28,33 +30,44 @@ async def start_producer() -> bool:
     settings = get_settings()
     if not settings.kafka_produce:
         return False
+    with _lock:
+        if _producer is not None:
+            return True
     try:
         from aiokafka import AIOKafkaProducer
-        _producer = AIOKafkaProducer(bootstrap_servers=settings.kafka_bootstrap_servers)
-        await _producer.start()
-        _loop = asyncio.get_running_loop()
+        producer = AIOKafkaProducer(bootstrap_servers=settings.kafka_bootstrap_servers)
+        await producer.start()
+        loop = asyncio.get_running_loop()
+        with _lock:
+            _producer = producer
+            _loop = loop
         logger.info("kafka_producer_started", servers=settings.kafka_bootstrap_servers)
         return True
     except Exception as exc:  # noqa: BLE001 — degrade gracefully
         logger.warning("kafka_producer_unavailable", error=str(exc))
-        _producer = None
+        with _lock:
+            _producer = None
         return False
 
 
 async def stop_producer() -> None:
     global _producer, _loop
-    if _producer is not None:
-        await _producer.stop()
+    with _lock:
+        producer = _producer
         _producer = None
-    _loop = None
+        _loop = None
+    if producer is not None:
+        await producer.stop()
 
 
 async def produce(topic: str, payload: dict) -> None:
     """Publish one message (no-op if the producer isn't running)."""
-    if _producer is None:
+    with _lock:
+        producer = _producer
+    if producer is None:
         return
     try:
-        await _producer.send_and_wait(topic, json.dumps(payload).encode())
+        await producer.send_and_wait(topic, json.dumps(payload).encode())
     except Exception as exc:  # noqa: BLE001
         logger.warning("kafka_produce_failed", topic=topic, error=str(exc))
 
@@ -66,14 +79,16 @@ def produce_sync(topic: str, payload: dict) -> None:
     there — schedule onto the captured main loop via ``run_coroutine_threadsafe`` instead. In an
     async context (e.g. the consumer loop) we schedule on the current loop directly.
     """
-    if _producer is None:
-        return
+    with _lock:
+        if _producer is None:
+            return
+        main_loop = _loop
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(produce(topic, payload))
     except RuntimeError:                       # called from a worker thread → use the main loop
-        if _loop is not None and _loop.is_running():
-            asyncio.run_coroutine_threadsafe(produce(topic, payload), _loop)
+        if main_loop is not None and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(produce(topic, payload), main_loop)
 
 
 async def consume_loop(stop: asyncio.Event) -> None:
