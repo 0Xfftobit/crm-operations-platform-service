@@ -1,8 +1,8 @@
 """End-to-end cadence pipeline: enroll → tick → guardrail → send → branch/stop, plus the ACs."""
 from datetime import UTC, datetime, timedelta
 
-from app import providers, service
-from app.domain.models import Contact, EngagementEvent, SequenceDef, Step
+from app import notifications, providers, service
+from app.domain.models import Contact, EngagementEvent, SequenceDef, Step, SuppressionEvent
 
 DAY = datetime(2026, 8, 4, 14, 0, tzinfo=UTC)      # 10:00 America/New_York — allowed window
 NIGHT = datetime(2026, 8, 4, 7, 0, tzinfo=UTC)     # 03:00 NY — quiet hours
@@ -200,3 +200,42 @@ def test_analytics_per_step_rates():
     a = analytics.sequence_analytics("an")
     s1 = next(s for s in a["steps"] if s["step_id"] == "s1")
     assert s1["sent"] == 1 and s1["open_rate"] == 1.0
+
+
+# ── Suppression + owner notification ───────────────────────────────────────
+def test_bounce_suppresses_contact_and_stops_sequence():
+    _contact()
+    _seq(steps=[Step(id="s1", channel="email", delay="PT0M", template="Hi")],
+         stop_rules=[])
+    service.enroll("c1", "seq", now=DAY)
+    service.apply_suppression(SuppressionEvent(contact_id="c1", kind="bounce",
+                                               channel="email", provider="sendgrid",
+                                               reason="5.1.1"))
+    c = service.get_contact("c1")
+    assert c["suppressed"] is True
+    assert service.tick(now=DAY)["sent"] == 0
+
+
+def test_complaint_suppresses_and_sets_opt_out():
+    _contact()
+    service.apply_suppression(SuppressionEvent(contact_id="c1", kind="complaint",
+                                               channel="email"))
+    c = service.get_contact("c1")
+    assert c["suppressed"] is True
+    assert c["opted_out"] is True
+
+
+def test_reply_notifies_owner_and_logs_when_no_service():
+    notifications.reset()
+    _contact(owner_id="lo:amy")
+    _seq(steps=[Step(id="s1", channel="email", delay="PT0M", template="Hi")],
+         stop_rules=[])
+    r = service.enroll("c1", "seq", now=DAY)
+    eid = r["enrollment"]["enrollment_id"]
+    service.tick(now=DAY)
+    service.ingest_engagement(EngagementEvent(contact_id="c1", enrollment_id=eid, step_id="s1",
+                                              kind="reply", channel="email",
+                                              payload={"body": "I'm interested"}))
+    log = notifications.notification_log()
+    assert len(log) == 1
+    assert log[0]["owner_id"] == "lo:amy"

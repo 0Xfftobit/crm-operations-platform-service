@@ -44,6 +44,8 @@ def check(
         return Decision("stop", "opted_out")
     if contact.dnc:
         return Decision("stop", "dnc")
+    if contact.suppressed:
+        return Decision("stop", f"suppressed:{contact.suppressed_reason or 'provider'}")
 
     # 2. Consent — fail closed if unknown/insufficient (hold, never send).
     if contact.consent_basis not in VALID_CONSENT:

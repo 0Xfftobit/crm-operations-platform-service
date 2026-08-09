@@ -5,10 +5,11 @@ read from the environment or a local ``.env``. Routes/services depend on ``get_s
 (cached). Keep this the single source of runtime configuration.
 """
 import json
+import os
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Lists we accept as a comma-separated string OR JSON from .env. NoDecode stops
@@ -65,6 +66,11 @@ class Settings(BaseSettings):
     compliance_api_key: str = Field("", alias="COMPLIANCE_API_KEY")
     precheck_timeout: float = Field(3.0, alias="FUS_PRECHECK_TIMEOUT")
 
+    # ── Notifications (FR-016: LO/owner reply notification) ────────────────
+    notification_service_url: str = Field("", alias="NOTIFICATION_SERVICE_URL")
+    notification_api_key: str = Field("", alias="NOTIFICATION_API_KEY")
+    integration_timeout_s: float = Field(5.0, alias="INTEGRATION_TIMEOUT_S")
+
     # ── Real channel provider credentials (optional — falls back to mock if unset) ──
     twilio_account_sid: str = Field("", alias="TWILIO_ACCOUNT_SID")
     twilio_auth_token: str = Field("", alias="TWILIO_AUTH_TOKEN")
@@ -85,6 +91,14 @@ class Settings(BaseSettings):
     scheduler_interval_s: int = Field(0, alias="SCHEDULER_INTERVAL_S")  # 0 = off (tick via API)
     default_timezone: str = Field("America/New_York", alias="DEFAULT_TIMEZONE")   # tz fallback
     lead_score_threshold: float = Field(70.0, alias="LEAD_SCORE_THRESHOLD")   # auto-enroll trigger
+
+    @model_validator(mode="after")
+    def _reject_default_key_in_prod(self) -> "Settings":
+        env = os.environ.get("ENV", self.env).lower()
+        allowed = {"local", "dev", "development", "test"}
+        if self.api_key == "change-me-dev-key" and env not in allowed:
+            raise ValueError("Default dev API key is not allowed in non-local environments")
+        return self
 
     @field_validator("cors_origins", mode="before")
     @classmethod

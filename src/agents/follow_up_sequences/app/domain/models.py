@@ -61,6 +61,7 @@ class Contact(BaseModel):
     name: str = ""                            # {{lead_name}}
     property_name: str = ""                   # {{property_name}}
     agent_name: str = ""                      # {{agent_name}}
+    owner_id: str = ""                        # LO/owner to notify on reply
     timezone: str = ""                        # IANA tz for quiet-hours (falls back to default)
     email: str = ""
     phone: str = ""
@@ -68,6 +69,8 @@ class Contact(BaseModel):
     consent_basis: str = "unknown"            # express_written|express|prior_business|unknown
     dnc: bool = False                         # do-not-call
     opted_out: bool = False                   # unsubscribed (permanent suppression)
+    suppressed: bool = False                  # bounce/complaint/block from provider
+    suppressed_reason: str = ""
     channel_prefs: list[str] = Field(default_factory=list)
     deal_stage: str = ""
     lead_score: float = 0.0
@@ -128,6 +131,23 @@ class EngagementEvent(BaseModel):
     step_id: str = ""
     kind: EngagementKind
     channel: Channel = "email"
+    payload: dict = Field(default_factory=dict)              # e.g. reply body, provider metadata
+    at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @field_validator("at")
+    @classmethod
+    def _tz(cls, v: datetime) -> datetime:
+        return _as_utc(v)
+
+
+class SuppressionEvent(BaseModel):
+    """Provider feedback (bounce/complaint/spam) that permanently suppresses a contact."""
+    contact_id: str
+    tenant_id: str = "default"
+    kind: Literal["bounce", "complaint", "spam", "block"]
+    channel: Channel = "email"
+    provider: str = ""
+    reason: str = ""
     at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("at")

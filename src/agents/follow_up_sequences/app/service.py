@@ -9,7 +9,16 @@ every send. Emits ``sequence.enrolled`` / ``outreach.sent`` / ``sequence.stopped
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from app import abtest, branching, events, guardrails, personalize, providers, scheduler
+from app import (
+    abtest,
+    branching,
+    events,
+    guardrails,
+    notifications,
+    personalize,
+    providers,
+    scheduler,
+)
 from app.clients import compliance_client
 from app.constants import CONVERTED_STAGES
 from app.core.config import Settings, get_settings
@@ -20,6 +29,7 @@ from app.domain.models import (
     OutreachRecord,
     SequenceDef,
     Step,
+    SuppressionEvent,
 )
 from app.duration import parse_duration
 from app.frequency import get_store as get_freq
@@ -51,6 +61,13 @@ def upsert_sequence(seq: SequenceDef) -> SequenceDef:
 def upsert_contact(contact: Contact) -> Contact:
     get_contact_repository().put(contact)
     return contact
+
+
+def get_contact(contact_id: str, *, tenant: str = "default") -> dict:
+    contact = get_contact_repository().get(contact_id, tenant)
+    if contact is None:
+        return {"status": "error", "reason": "unknown_contact"}
+    return contact.model_dump()
 
 
 def _step(seq: SequenceDef, step_id: str) -> Step | None:
@@ -293,8 +310,15 @@ def _active(contact_id: str, tenant: str) -> list[Enrollment]:
 def ingest_engagement(event: EngagementEvent) -> dict:
     get_engagement_repository().add(event)                    # feeds branching + analytics
     if event.kind == "reply":                                 # FR: reply → pause the sequence
+        contact = get_contact_repository().get(event.contact_id, event.tenant_id)
         for e in _active(event.contact_id, event.tenant_id):
             _finish(e, "replied", _now(), state="paused")
+            if contact and contact.owner_id:
+                notifications.notify_owner_of_reply(
+                    event.contact_id, contact.owner_id, enrollment_id=e.enrollment_id,
+                    step_id=event.step_id, channel=event.channel,
+                    body=event.payload.get("body", ""),
+                )
     return {"status": "recorded", "kind": event.kind}
 
 
@@ -359,6 +383,27 @@ def mark_manual_outreach(contact_id: str, *, tenant: str = "default") -> dict:
     contact.last_manual_outreach_at = _now()                 # pause automation for the cooldown
     get_contact_repository().put(contact)
     return {"contact_id": contact_id, "cooldown_started": True}
+
+
+def apply_suppression(event: SuppressionEvent) -> dict:
+    """Apply a provider bounce/complaint/spam/block as permanent suppression."""
+    contact = get_contact_repository().get(event.contact_id, event.tenant_id)
+    if contact is None:
+        return {"status": "error", "reason": "unknown_contact"}
+    contact.suppressed = True
+    contact.suppressed_reason = f"{event.kind}:{event.provider}:{event.reason}".strip(":")
+    contact.dnc = contact.dnc or event.kind in ("complaint", "spam", "block")
+    contact.opted_out = contact.opted_out or event.kind == "complaint"
+    get_contact_repository().put(contact)
+    stopped = 0
+    for e in _active(event.contact_id, event.tenant_id):
+        _finish(e, f"suppressed_{event.kind}", _now())
+        stopped += 1
+    _audit("suppression_applied", {"contact_id": event.contact_id, "kind": event.kind,
+                                   "reason": event.reason, "stopped": stopped})
+    events.publish(events.EVENT_SUPPRESSED, event.model_dump(mode="json"))
+    return {"contact_id": event.contact_id, "suppressed": True,
+            "kind": event.kind, "stopped": stopped}
 
 
 def set_enrollment_state(enrollment_id: str, *, state: str) -> dict:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from uuid import uuid4
 
 import httpx
 
@@ -48,7 +49,7 @@ def precheck(
         "scheduled_for": scheduled_for.isoformat(),
     }
 
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "X-Request-ID": uuid4().hex}
     if settings.compliance_api_key:
         headers["X-API-Key"] = settings.compliance_api_key
     elif settings.api_key:

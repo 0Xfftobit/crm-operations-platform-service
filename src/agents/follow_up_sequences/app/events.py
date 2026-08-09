@@ -23,6 +23,7 @@ EVENT_SENT = "outreach.sent"
 EVENT_FAILED = "outreach.failed"
 EVENT_STOPPED = "sequence.stopped"
 EVENT_COMPLETED = "sequence.completed"
+EVENT_SUPPRESSED = "contact.suppressed"
 
 _events: list[dict] = []
 _dlq: list[dict] = []

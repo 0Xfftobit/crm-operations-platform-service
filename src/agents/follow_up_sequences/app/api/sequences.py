@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from app import analytics, events, service
 from app.api.deps import require_api_key
-from app.domain.models import Contact, EngagementEvent, SequenceDef
+from app.domain.models import Contact, EngagementEvent, SequenceDef, SuppressionEvent
 
 router = APIRouter(tags=["sequences"])
 Auth = Depends(require_api_key)
@@ -119,6 +119,11 @@ def consent(contact_id: str, req: ConsentRequest, _: Annotated[None, Auth]) -> d
 @router.post("/contacts/{contact_id}/manual-outreach", summary="Record LO manual touch (cooldown)")
 def manual_outreach(contact_id: str, _: Annotated[None, Auth], tenant: str = "default") -> dict:
     return service.mark_manual_outreach(contact_id, tenant=tenant)
+
+
+@router.post("/webhooks/suppression", summary="Provider bounce/complaint/spam — suppress contact")
+def suppression(event: SuppressionEvent, _: Annotated[None, Auth]) -> dict:
+    return service.apply_suppression(event)
 
 
 # ── Auto-enroll triggers ───────────────────────────────────────────────────
