@@ -5,10 +5,11 @@ read from the environment or a local ``.env``. Routes/services depend on ``get_s
 (cached). Keep this the single source of runtime configuration.
 """
 import json
+import os
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Lists we accept as a comma-separated string OR JSON from .env. NoDecode stops
@@ -120,6 +121,14 @@ class Settings(BaseSettings):
 
     # ── HTTP-poll upstream (EVENT_SOURCE_GATEWAY=http) ──────────────────────
     http_poll_interval_s: int = Field(30, alias="HTTP_POLL_INTERVAL_S")
+
+    @model_validator(mode="after")
+    def _reject_default_key_in_prod(self) -> "Settings":
+        env = os.environ.get("ENV", self.env).lower()
+        allowed = {"local", "dev", "development", "test"}
+        if self.api_key == "change-me-dev-key" and env not in allowed:
+            raise ValueError("Default dev API key is not allowed in non-local environments")
+        return self
 
     @field_validator("cors_origins", "disclosure_warn_offsets", "export_roles", mode="before")
     @classmethod

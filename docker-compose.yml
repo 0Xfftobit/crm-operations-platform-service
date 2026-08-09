@@ -82,6 +82,9 @@ services:
       KAFKA_CONSUMER_ENABLED: ${TAS_KAFKA_CONSUMER_ENABLED:-false}
       KAFKA_TOPICS: ${TAS_KAFKA_TOPICS:-deal.stage_changed,lead.assigned,document.received}
       TEMPORAL_ENABLED: ${TEMPORAL_ENABLED:-false}
+      # Cross-agent fan-out to Follow-up Sequences
+      FOLLOW_UP_SEQUENCES_URL: http://follow_up_sequences:8000
+      FUS_FANOUT_ENABLED: "true"
     expose: ["8000"]
     restart: unless-stopped
     healthcheck:
@@ -136,7 +139,9 @@ services:
       <<: *agent-env
       STORAGE_BACKEND: ${PAS_STORAGE_BACKEND:-memory}
       DATA_DIR: /app/data/performance_analytics
+      # Cross-agent fan-out to Feedback Loop
       FEEDBACK_LOOP_URL: ${FEEDBACK_LOOP_URL:-http://feedback_loop:8000}
+      OUTCOME_FANOUT_ENABLED: "true"
     expose: ["8000"]
     restart: unless-stopped
     healthcheck:

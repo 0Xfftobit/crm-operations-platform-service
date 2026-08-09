@@ -7,6 +7,7 @@ blocks ingestion on an optional downstream fan-out.
 from __future__ import annotations
 
 import logging
+from uuid import uuid4
 
 import httpx
 
@@ -34,7 +35,7 @@ def fanout_outcome(outcome: OutcomeEvent, *, settings: Settings) -> dict | None:
         "occurred_at": outcome.occurred_at.isoformat(),
         "prediction_id": None,
     }
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "X-Request-ID": uuid4().hex}
     api_key = settings.feedback_loop_api_key or settings.api_key
     if api_key:
         headers["X-API-Key"] = api_key

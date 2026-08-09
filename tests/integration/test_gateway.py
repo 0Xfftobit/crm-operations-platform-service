@@ -65,3 +65,25 @@ def test_default_dev_key_rejected_in_production(monkeypatch):
     get_settings.cache_clear()
     with pytest.raises(ValueError):
         Settings()
+
+
+def test_gateway_generates_and_returns_request_id():
+    client = TestClient(app)
+    resp = client.get(
+        "/compliance-monitor/api/v1/health",
+        headers={"X-API-Key": "change-me-dev-key"},
+    )
+    assert resp.status_code == 502
+    assert "x-request-id" in resp.headers
+    assert len(resp.headers["x-request-id"]) == 32
+
+
+def test_gateway_propagates_existing_request_id():
+    client = TestClient(app)
+    rid = "abc-123"
+    resp = client.get(
+        "/compliance-monitor/api/v1/health",
+        headers={"X-API-Key": "change-me-dev-key", "X-Request-ID": rid},
+    )
+    assert resp.status_code == 502
+    assert resp.headers.get("x-request-id") == rid

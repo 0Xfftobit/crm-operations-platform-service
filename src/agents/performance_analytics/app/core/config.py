@@ -1,11 +1,12 @@
 """Application settings for the Performance Analytics System."""
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 CsvList = Annotated[list[str], NoDecode]
@@ -53,6 +54,14 @@ class Settings(BaseSettings):
     feedback_loop_url: str = Field("", alias="FEEDBACK_LOOP_URL")
     feedback_loop_api_key: str = Field("", alias="FEEDBACK_LOOP_API_KEY")
     feedback_loop_timeout: float = Field(5.0, alias="FEEDBACK_LOOP_TIMEOUT")
+
+    @model_validator(mode="after")
+    def _reject_default_key_in_prod(self) -> "Settings":
+        env = os.environ.get("ENV", self.env).lower()
+        allowed = {"local", "dev", "development", "test"}
+        if self.api_key == "change-me-dev-key" and env not in allowed:
+            raise ValueError("Default dev API key is not allowed in non-local environments")
+        return self
 
     @field_validator("cors_origins", mode="before")
     @classmethod

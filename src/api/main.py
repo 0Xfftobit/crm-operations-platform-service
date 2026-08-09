@@ -6,6 +6,7 @@ stays a self-contained engine under src/agents/<name>/ with its own app + deps.
 from __future__ import annotations
 
 import logging
+from uuid import uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
@@ -114,9 +115,16 @@ async def proxy(slug: str, path: str, request: Request, settings: Settings = Dep
     agent = _SLUG_TO_AGENT.get(slug)
     if not agent:
         return Response(status_code=404, content=f"unknown agent '{slug}'")
+    # Request-id propagation / generation for end-to-end tracing.
+    request_id = request.headers.get("x-request-id") or uuid4().hex
+
     base = _upstream(agent, settings)
     if not base:
-        return Response(status_code=502, content=f"{agent} upstream not configured")
+        return Response(
+            status_code=502,
+            content=f"{agent} upstream not configured",
+            headers={"x-request-id": request_id},
+        )
     url = base.rstrip("/") + "/" + path
     body = await request.body()
 
@@ -126,6 +134,7 @@ async def proxy(slug: str, path: str, request: Request, settings: Settings = Dep
         for k, v in request.headers.items()
         if k.lower() not in _HOP_BY_HOP
     }
+    headers["x-request-id"] = request_id
 
     timeout = settings.agent_timeout(agent)
     try:
@@ -149,6 +158,7 @@ async def proxy(slug: str, path: str, request: Request, settings: Settings = Dep
         for k, v in up.headers.items()
         if k.lower() not in _HOP_BY_HOP and k.lower() != "content-length"
     }
+    response_headers["x-request-id"] = request_id
     return Response(
         status_code=up.status_code,
         content=up.content,

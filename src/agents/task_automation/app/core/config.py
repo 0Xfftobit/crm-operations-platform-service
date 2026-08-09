@@ -1,9 +1,10 @@
 """Application settings (pydantic-settings + .env)."""
 import json
+import os
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 CsvList = Annotated[list[str], NoDecode]
@@ -96,6 +97,14 @@ class Settings(BaseSettings):
     s3_export_bucket: str = Field("", alias="S3_EXPORT_BUCKET")
     s3_export_prefix: str = Field("task-automation/ledger", alias="S3_EXPORT_PREFIX")
     s3_export_region: str = Field("", alias="S3_EXPORT_REGION")
+
+    @model_validator(mode="after")
+    def _reject_default_key_in_prod(self) -> "Settings":
+        env = os.environ.get("ENV", self.env).lower()
+        allowed = {"local", "dev", "development", "test"}
+        if self.api_key == "change-me-dev-key" and env not in allowed:
+            raise ValueError("Default dev API key is not allowed in non-local environments")
+        return self
 
     @field_validator("cors_origins", "round_robin_agents", "kafka_topics", mode="before")
     @classmethod

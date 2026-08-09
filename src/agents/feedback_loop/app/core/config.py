@@ -1,11 +1,12 @@
 """Application settings (pydantic-settings + .env)."""
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 CsvList = Annotated[list[str], NoDecode]
@@ -54,6 +55,14 @@ class Settings(BaseSettings):
     # Retraining
     auto_retrain_enabled: bool = Field(True, alias="AUTO_RETRAIN_ENABLED")
     auto_retrain_risk_class: str = Field("low", alias="AUTO_RETRAIN_RISK_CLASS")
+
+    @model_validator(mode="after")
+    def _reject_default_key_in_prod(self) -> "Settings":
+        env = os.environ.get("ENV", self.env).lower()
+        allowed = {"local", "dev", "development", "test"}
+        if self.api_key == "change-me-dev-key" and env not in allowed:
+            raise ValueError("Default dev API key is not allowed in non-local environments")
+        return self
 
     @field_validator("cors_origins", mode="before")
     @classmethod
