@@ -9,7 +9,7 @@ comms, ``DisparityResult`` monitors fair-lending, ``DisclosureTimer`` tracks ECO
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 Severity = Literal["info", "warning", "critical"]
 Channel = Literal["sms", "email", "call", "whatsapp", "push"]
@@ -20,6 +20,8 @@ RAG = Literal["green", "amber", "red"]
 
 class ActivityEvent(BaseModel):
     """A monitored activity from a peer engine (comm, decision, record change, override…)."""
+
+    model_config = ConfigDict(extra="ignore")
 
     event_id: str = ""
     event_type: str                        # comm_sent | decision | record_change | consent_update…

@@ -21,6 +21,8 @@ os.environ.setdefault("COLD_STORE_GATEWAY", "none")
 os.environ.setdefault("AUDIT_LIFECYCLE_INTERVAL_MIN", "0")
 os.environ.setdefault("KAFKA_PRODUCE", "false")
 os.environ.setdefault("KAFKA_INGEST", "false")
+os.environ.setdefault("KAFKA_CONSUMER_ENABLED", "false")
+os.environ.setdefault("KAFKA_TOPICS", "compliance-audit,crm.*")
 
 
 @pytest.fixture(autouse=True)
@@ -33,13 +35,13 @@ def _reset_settings():
 @pytest.fixture(autouse=True)
 def _reset_state():
     """Clear the ledger, repositories, and event log between tests (module-level singletons)."""
-    from app import audit, cache, casework, coldstore, coverage, events, worm
+    from app import audit, cache, casework, coldstore, coverage, events, kafka_bus, worm
     from app.repositories import reset_repositories
 
     def _reset_all() -> None:
         for step in (audit.reset_ledger, reset_repositories, events.reset_events,
                      casework.reset_suppression, cache.reset, worm.reset, coverage.reset,
-                     coldstore.reset):
+                     coldstore.reset, kafka_bus.reset_kafka_bus):
             try:
                 step()
             except Exception:  # noqa: BLE001,S110 — best-effort teardown across backends

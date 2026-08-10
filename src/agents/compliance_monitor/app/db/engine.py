@@ -5,7 +5,7 @@ Postgres uses a pre-ping pool. ``reset_engine`` lets the test suite repoint the 
 """
 from functools import lru_cache
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -45,3 +45,16 @@ def reset_engine() -> None:
         pass
     get_engine.cache_clear()
     _factory.cache_clear()
+
+
+def postgres_health() -> dict[str, str]:
+    """Best-effort Postgres/SQLite connectivity check for /ready probes."""
+    settings = get_settings()
+    if not settings.uses_sql:
+        return {"status": "disabled"}
+    try:
+        with get_engine().connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"status": "ok"}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": str(exc)}

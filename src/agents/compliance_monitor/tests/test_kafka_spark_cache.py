@@ -32,19 +32,26 @@ def test_producer_degrades_when_broker_unavailable(monkeypatch):
     assert asyncio.run(kafka_bus.start_producer()) is False    # graceful degrade, no crash
 
 
-def test_produce_forwards_to_the_running_producer():
+def test_produce_forwards_to_the_running_producer(monkeypatch):
+    monkeypatch.setenv("KAFKA_PRODUCE", "true")
+    get_settings.cache_clear()
     sent = []
 
     class _Fake:
-        async def send_and_wait(self, topic, value):
-            sent.append((topic, json.loads(value)))
+        async def send_and_wait(self, topic, value, key=None):
+            sent.append((topic, json.loads(value), key))
 
     kafka_bus._producer = _Fake()
     try:
-        asyncio.run(kafka_bus.produce("compliance.alert", {"x": 1}))
+        record = asyncio.run(kafka_bus.produce("compliance.alert", {"x": 1, "deal_id": "d1"}))
     finally:
         kafka_bus._producer = None
-    assert sent == [("compliance.alert", {"x": 1})]
+    assert record is not None
+    assert record["transport"] == "kafka"
+    assert len(sent) == 1
+    assert sent[0][0] == "compliance.alert"
+    assert sent[0][1] == {"x": 1, "deal_id": "d1"}
+    assert sent[0][2] == b"d1"
 
 
 def test_consumer_handler_ingests_activity():

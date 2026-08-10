@@ -5,6 +5,7 @@ adverse-action auto-trigger, consent.updated ingestion, and the missing-explaina
 import asyncio
 
 from app import cache, kafka_bus, service
+from app.core.config import get_settings
 from app.domain.models import ActivityEvent, Consent, PrecheckRequest
 from app.repositories import get_case_repository, get_disclosure_repository
 
@@ -36,11 +37,13 @@ def test_retention_anonymize_flushes_cache():
 
 
 # ── Kafka producing from a worker thread (sync FastAPI handler) ─────────────
-def test_produce_sync_works_off_the_main_loop():
+def test_produce_sync_works_off_the_main_loop(monkeypatch):
+    monkeypatch.setenv("KAFKA_PRODUCE", "true")
+    get_settings.cache_clear()
     sent = []
 
     class _Fake:
-        async def send_and_wait(self, topic, value):
+        async def send_and_wait(self, topic, value, key=None):
             import json
             sent.append((topic, json.loads(value)))
 

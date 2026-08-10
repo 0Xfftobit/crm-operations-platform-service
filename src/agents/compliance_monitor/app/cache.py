@@ -88,3 +88,12 @@ def reset() -> None:
     with _lock:
         _mem.clear()
         _redis, _redis_url = None, None
+
+
+def redis_health() -> dict[str, str]:
+    """Best-effort Redis connectivity check for /ready probes."""
+    settings = get_settings()
+    if not settings.uses_cache:
+        return {"status": "disabled"}
+    client = _client()
+    return {"status": "ok"} if client is not None else {"status": "unavailable"}

@@ -111,7 +111,12 @@ class Settings(BaseSettings):
 
     # ── Kafka producer (emit produced events onto the bus) ──────────────────
     kafka_produce: bool = Field(False, alias="KAFKA_PRODUCE")
-    kafka_ingest: bool = Field(False, alias="KAFKA_INGEST")   # run the consumer loop
+    kafka_ingest: bool = Field(False, alias="KAFKA_INGEST")   # run the consumer loop (legacy alias)
+    kafka_consumer_enabled: bool = Field(False, alias="KAFKA_CONSUMER_ENABLED")
+    kafka_consumer_group: str = Field("compliance-monitoring", alias="KAFKA_CONSUMER_GROUP")
+    kafka_topics: CsvList = Field(
+        default_factory=lambda: ["compliance-audit", "crm.*"], alias="KAFKA_TOPICS"
+    )
     kafka_group_id: str = Field("compliance-monitoring", alias="KAFKA_GROUP_ID")
 
     # ── Coverage-gap / dropped-event monitoring (BR-3, NFR coverage=100%) ───
@@ -130,7 +135,17 @@ class Settings(BaseSettings):
             raise ValueError("Default dev API key is not allowed in non-local environments")
         return self
 
-    @field_validator("cors_origins", "disclosure_warn_offsets", "export_roles", mode="before")
+    @model_validator(mode="after")
+    def _reject_wildcard_cors_in_prod(self) -> "Settings":
+        env = os.environ.get("ENV", self.env).lower()
+        allowed = {"local", "dev", "development", "test"}
+        if env not in allowed and any(o == "*" for o in self.cors_origins):
+            raise ValueError("Wildcard CORS origin (*) is not allowed in non-local environments")
+        return self
+
+    @field_validator(
+        "cors_origins", "disclosure_warn_offsets", "export_roles", "kafka_topics", mode="before"
+    )
     @classmethod
     def _split_list(cls, v: object) -> object:
         """Accept a JSON array OR a comma-separated string for list env vars."""

@@ -42,11 +42,6 @@ async def _anchor_loop(interval_min: int) -> None:
             logger.info("merkle_anchor", seq_to=result["seq_to"], root=result["merkle_root"][:16])
 
 
-async def _consume_loop(stop: asyncio.Event) -> None:
-    from app import kafka_bus
-    await kafka_bus.consume_loop(stop)
-
-
 async def _coverage_loop(interval_min: int) -> None:
     """Periodically flag sources that have gone silent (coverage blind spots, BR-3)."""
     from app import service
@@ -79,6 +74,8 @@ async def lifespan(app: FastAPI):
 
     from app import kafka_bus
     await kafka_bus.start_producer()
+    if settings.kafka_consumer_enabled or settings.kafka_ingest:
+        await kafka_bus.start_consumer()
 
     stop = asyncio.Event()
     tasks: list[asyncio.Task] = []
@@ -86,8 +83,6 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(_chain_verify_loop(settings.chain_verify_interval_min)))
     if settings.merkle_anchor_interval_min > 0:
         tasks.append(asyncio.create_task(_anchor_loop(settings.merkle_anchor_interval_min)))
-    if settings.kafka_ingest:
-        tasks.append(asyncio.create_task(_consume_loop(stop)))
     if settings.event_source_gateway == "http":
         from app import http_source
         tasks.append(asyncio.create_task(http_source.poll_loop(stop)))
@@ -101,6 +96,7 @@ async def lifespan(app: FastAPI):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+    await kafka_bus.stop_consumer()
     await kafka_bus.stop_producer()
     logger.info("application_stopping", app_name=settings.app_name)
 

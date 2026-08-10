@@ -27,9 +27,11 @@ def publish(event_type: str, payload: dict) -> None:
             "at": datetime.now(UTC).isoformat(),
         })
     logger.info("event", event_type=event_type)
-    # Mirror onto the Kafka bus when the producer is running (no-op otherwise).
+    # Mirror onto the Kafka bus when the producer is running (memory fallback otherwise).
     from app import kafka_bus
-    kafka_bus.produce_sync(event_type, payload)
+    kafka_bus.produce_sync(
+        kafka_bus.canonical_topic(event_type), payload, key=kafka_bus.partition_key(payload)
+    )
 
 
 def get_events(*, event_type: str | None = None, limit: int = 200) -> list[dict]:

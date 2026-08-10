@@ -1,7 +1,9 @@
 """Liveness + readiness probes (used by the Docker HEALTHCHECK and the ECS health check)."""
 from fastapi import APIRouter
 
+from app.cache import redis_health
 from app.core.config import get_settings
+from app.db.engine import postgres_health
 
 router = APIRouter(tags=["health"])
 
@@ -20,4 +22,6 @@ def ready() -> dict:
         "env": s.env,
         "storage": s.storage_gateway,
         "uses_sql": s.uses_sql,
+        "postgres": postgres_health(),
+        "redis": redis_health(),
     }
