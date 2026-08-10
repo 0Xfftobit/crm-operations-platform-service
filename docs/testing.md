@@ -40,7 +40,7 @@ cd src/agents/compliance_monitor
 uv run pytest -q
 ```
 
-Expected: `109 passed`
+Expected: `152 passed`
 
 ### Feedback Loop
 
@@ -49,7 +49,7 @@ cd src/agents/feedback_loop
 uv run pytest -q
 ```
 
-Expected: `25 passed`
+Expected: `63 passed`
 
 ### Follow-up Sequences
 
@@ -58,7 +58,7 @@ cd src/agents/follow_up_sequences
 uv run pytest -q
 ```
 
-Expected: `50 passed`
+Expected: `96 passed`
 
 ### Performance Analytics
 
@@ -67,7 +67,7 @@ cd src/agents/performance_analytics
 uv run pytest -q
 ```
 
-Expected: `42 passed`
+Expected: `91 passed`
 
 ### Task Automation
 
@@ -76,7 +76,7 @@ cd src/agents/task_automation
 uv run pytest -q
 ```
 
-Expected: `78 passed, 1 skipped`
+Expected: `129 passed, 1 skipped`
 
 ## 3. Gateway / Integration Tests
 
@@ -115,6 +115,19 @@ The new P4 tests live in `tests/integration/test_gateway.py`. They validate auth
 ### Task Automation
 
 - FUS fan-out: `app/clients/followup_client.py`. Add `FUS_FANOUT_ENABLED=true` and `FOLLOW_UP_SEQUENCES_URL` to exercise.
+
+### Kafka / Redpanda
+
+Every agent now has a `app/messaging/kafka_bus.py` (CMS uses `app/kafka_bus.py`) with an in-memory fallback. Broker-free contract tests are in each agent's `tests/test_kafka_bus.py` (TAS uses `tests/test_kafka_contract.py`). To exercise the real Redpanda/Kafka path:
+
+1. Start the local stack: `docker compose --profile infra up -d`
+2. In each agent's `.env` set:
+   ```bash
+   KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+   KAFKA_PRODUCE=true
+   KAFKA_CONSUMER_ENABLED=true
+   ```
+3. Run `uv run pytest -q` again; the contract tests will fallback gracefully if the broker is unreachable.
 
 ## 5. Manual Smoke Tests
 

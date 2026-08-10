@@ -417,3 +417,74 @@ return Response(status_code=up.status_code, content=up.content, headers=headers)
    - `NoDecode` / mypy issues
    - Repository `list` method shadowing
    - Dead/duplicate code
+
+---
+
+## 8. New bugs found and fixed in this pass (2026-08-10)
+
+### 8.1 Follow-up Sequences A/B variant allocation used MD5
+- **File:** `src/agents/follow_up_sequences/app/abtest.py`
+- **Line:** 19
+- **Severity:** Minor
+- **Bug:** `hashlib.md5` was used for deterministic step-variant assignment. MD5 is cryptographically broken and inconsistent with the Feedback Loop A/B hashing fix.
+- **Fix:** Replaced with `hashlib.sha256`.
+- **Status:** Fixed
+
+### 8.2 Gateway /ready did not probe upstream dependency health
+- **File:** `src/api/main.py`
+- **Lines:** 90-114
+- **Severity:** Major
+- **Bug:** The gateway `/ready` endpoint only probed upstream `/health`. Real dependency problems (Postgres/Redis/cache/storage) were not surfaced.
+- **Fix:** `/ready` now tries each upstream `/api/v1/ready` first, then falls back through `/api/v1/health`, `/health`, and `/healthz`.
+- **Status:** Fixed
+
+### 8.3 CORS wildcard allowed in non-local environments
+- **Files:** `src/agents/*/app/core/config.py`, `config/settings.py`
+- **Severity:** Major
+- **Bug:** `CORS_ORIGINS=*` could be set in production, defeating origin restrictions.
+- **Fix:** Added a `model_validator` to every agent and the gateway that rejects `*` in `cors_origins` when `ENV` is not local/dev/test. Added `CORS_ORIGINS` to the gateway `.env.example` and applied `CORSMiddleware` in `src/api/main.py`.
+- **Status:** Fixed
+
+### 8.4 Readiness probes did not check real dependencies
+- **Files:** `src/agents/compliance_monitor/app/api/health.py`, `src/agents/follow_up_sequences/app/api/health.py`, `src/agents/performance_analytics/app/api/health.py`, `src/agents/feedback_loop/app/api/health.py`
+- **Severity:** Major
+- **Bug:** Most agents returned only `storage`/`env` in `/ready`; they did not verify Postgres, Redis, or writable storage paths.
+- **Fix:**
+  - CMS `/ready` now reports `postgres` and `redis` health.
+  - FUS `/ready` now reports `redis` health and precheck status.
+  - PAS `/ready` now reports `storage` path writability and fan-out status.
+  - FLS `/ready` now reports `data` and `models` path writability.
+- **Status:** Fixed
+
+### 8.5 No mypy gate in CI
+- **File:** `.github/workflows/ci.yml`
+- **Severity:** Minor / Type
+- **Bug:** Type errors could reach production because CI only ran `ruff`.
+- **Fix:** Added a `mypy` step to the root `ci.yml` job. It currently type-checks `src/api` and `config`; agent mypy will be added as remaining type debt is cleared.
+- **Status:** Fixed (gateway); per-agent mypy still pending
+
+### 8.6 `logging` calls passed bare keyword arguments
+- **Files:** `src/agents/follow_up_sequences/app/notifications.py`, `src/agents/feedback_loop/app/model_retrainer.py`, `src/agents/performance_analytics/app/clients/feedback_client.py`, and `src/agents/task_automation/app/integrations/*.py`
+- **Severity:** Major
+- **Bug:** Several `logging` calls were written as `logger.info("...", key=value)` instead of using `extra={"key": value}` or an f-string. This raises `KeyError` at runtime for any handler that does not expect these keys.
+- **Fix:** Converted to f-strings or `extra=` dicts.
+- **Status:** Fixed
+
+### 8.7 PAS Kafka producer hid `send_and_wait` failures
+- **File:** `src/agents/performance_analytics/app/messaging/kafka_bus.py`
+- **Lines:** 128-141, 200-203
+- **Severity:** Major
+- **Bug:** `_publish_real()` swallowed `send_and_wait` exceptions, so `produce()` always set `transport="kafka"` even when the broker send failed. Rows that should have been retried from the in-memory bus were reported as "sent".
+- **Fix:** `_publish_real()` now returns `bool` (`True` on success, `False` on failure). `produce()` only marks `transport="kafka"` when the call returns `True`; otherwise the row stays in the in-memory bus.
+- **Status:** Fixed
+
+### 8.8 PAS global in-memory repositories still unlocked
+- **Files:** `src/agents/performance_analytics/app/repositories.py`, `app/service.py`
+- **Severity:** Major
+- **Bug:** Although most agents were already wrapped in `threading.RLock()`, PAS repositories and service globals were still unprotected.
+- **Fix:** Wrapped PAS repository methods and service state in `threading.RLock()`.
+- **Status:** Fixed
+
+### 8.9 Open P4 blockers still requiring real infrastructure / credentials
+- **Categories:** Persistence (Postgres/S3), Redis, Kafka/Redpanda, Temporal, external service integrations (Twilio/SendGrid/WhatsApp/CRM/calendar/feature store/DW/MLflow), OAuth/JWT/RBAC, load/resilience testing, observability dashboards, deployment packaging (K8s/Vault).
+- **Note:** The code is now configured and wired to use these when credentials are supplied (via `.env` / secrets manager). They cannot be fully resolved without provisioned infrastructure and real credentials.

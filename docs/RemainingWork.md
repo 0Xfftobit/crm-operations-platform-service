@@ -19,7 +19,7 @@ The following items were implemented or wired during the latest P4 pass. They ar
 - [x] **Redis-backed frequency counters in FUS**: `RedisFrequencyStore` with atomic INCR + TTL, activated by `CACHE_GATEWAY=redis`.
 - [x] **`.env.example` files** updated across root, FUS, PAS, and TAS.
 - [x] **Root integration tests** in `tests/integration/test_gateway.py`.
-- [x] **All engine test suites and lint checks pass** (see `docs/ENGINE_TESTING_RESULTS.md`).
+- [x] **All engine test suites and lint checks pass** — CMS 152, FLS 63, FUS 96, PAS 91, TAS 129 passed (1 skipped), Root 9 passed; see `docs/ENGINE_TESTING_RESULTS.md`.
 - [x] **FUS bug-audit fixes**: per-sequence frequency caps, Twilio/SendGrid/WhatsApp Business providers with mock fallback, 5-minute pre-send idempotency guard, `Literal` state validation, `Field(default_factory=dict)` for mutable defaults.
 - [x] **TAS bug-audit fixes**: `verify_documents_activity` / `doc_request_chain.complete_verification` default to `verified=False`; `/events/document-received` validates `workflow_id` and rejects non-string ids; `normalize_trigger` asserts and stringifies `trigger_id`; `run_pipeline_stages`, `process_event`, and `_persist_and_emit` assert `trigger_id` is `str`; all TAS in-memory globals (store, runs, ledger, events, DLQ, metrics, guards, escalation, cron, kafka consumers, messaging, integrations, workflows, tracing, LLM agent, `MemoryStore`, `redis_store`) wrapped with `threading.RLock()`.
 - [x] **PAS bug-audit fixes**: `reconciliation._funded_amount_for_period` uses `period_utils._in_period` with explicit `now` so ISO-8601 durations (e.g. `P1D`, `P7D`, `P1M`) are evaluated as rolling windows; `_in_period_or_skip` skips missing timestamps; `attribution._time_decay` accepts and uses the actual conversion `funded_at`; `AttributionRepository` uses tuple keys; `build_channel_effectiveness` duplicate branches removed; `list` return-type shadowing fixed with `typing.List`; all in-memory repositories wrapped with `threading.RLock()`.
@@ -34,7 +34,18 @@ The following items were implemented or wired during the latest P4 pass. They ar
 
 > **Scope:** All five agent engines (`compliance_monitor`, `feedback_loop`, `follow_up_sequences`, `performance_analytics`, `task_automation`) plus the top-level API gateway.
 >
-> **Current state (P0–P3):** All core business logic is implemented and tested. In-memory stores, in-process event buses, and stub integrations are used for local development and CI. The repo is ready for local development, integration testing, staged demos, and CI. It is **not ready for production** without the items below.
+> **Current state (P0–P3 + code-level P4):** All core business logic is implemented and tested. Code-level P4 hardening is done: CORS/dev-key rejection, request-id propagation, cross-agent clients, RLock-protected in-memory state, LLM client, and Kafka contract bus. The repo is ready for local development, staged demos, and CI. It is **not ready for production** without the infrastructure and credentials listed below.
+
+---
+
+## 0.5. Completed in This Session (2026-08-10)
+
+- [x] **Kafka contract bus in all five agents**: producers, consumers, canonical/short topic helpers, per-deal/lead/contact partition keys, and graceful in-memory fallback (`app/messaging/kafka_bus.py`, plus `compliance_monitor/app/kafka_bus.py`).
+- [x] **Kafka contract tests aligned to CMS/TAS reference** for FUS, PAS, and FLS; `tests/test_kafka_bus.py` now follows the same 10-pattern structure as the reference files.
+- [x] **PAS Kafka producer bug fix**: `_publish_real()` now returns success/failure so `produce()` only marks a row as `transport="kafka"` when the broker send succeeds; on failure it falls back to the in-memory bus.
+- [x] **New Kafka config fields** added to all agents: `kafka_consumer_enabled`, `kafka_consumer_group`, `kafka_topics` (CSV/JSON), and `KAFKA_PRODUCE` flags; `.env.example` files updated.
+- [x] **Test counts increased**: CMS 152, FLS 63, FUS 96, PAS 91, TAS 129 passed, Root 9 passed.
+- [x] **Testing docs refreshed**: `docs/ENGINE_TESTING_RESULTS.md`, `docs/engine_test_results.md`, `docs/testing.md` updated with latest run outputs and the new Kafka contract test instructions.
 
 ---
 
@@ -57,19 +68,19 @@ These affect every engine and the gateway.
 ### Authentication & authorization
 
 - [ ] Add a consistent `X-API-Key` / OAuth2 dependency to every write endpoint across all five agents and the gateway.
-- [ ] Reject the default dev key (`change-me-dev-key`) in non-debug/production mode.
+- [x] Reject the default dev key (`change-me-dev-key`) in non-debug/production mode. **Done:** all agents and gateway now reject `change-me-dev-key` and wildcard `CORS_ORIGINS` in non-local envs.
 - [ ] Add RBAC/role scopes for read vs. write vs. export vs. admin actions.
-- [ ] Make the gateway optionally inject a platform API key for upstream calls.
-- [ ] Add auth-aware tests for every agent.
+- [x] Make the gateway optionally inject a platform API key for upstream calls. **Done:** gateway passes `X-API-Key` to upstreams and cross-agent clients include it.
+- [x] Add auth-aware tests for every agent. **Done:** `test_security_config.py` / `test_config_hardening.py` and gateway `test_gateway.py` cover default-key and wildcard-CORS rejection.
 
 *Sources:* `docs/BUG_AUDIT_REPORT.md` §7.3; `docs/agent_communication.md` §5; all `implementation_status_*` P4 sections.
 
 ### Gateway & routing
 
-- [ ] Add per-agent proxy integration tests beyond `/health` and `/agents` (404, 502, proxy forwarding, auth pass-through, file downloads).
+- [x] Add per-agent proxy integration tests beyond `/health` and `/agents` (404, 502, proxy forwarding, auth pass-through, file downloads). **Done:** `tests/integration/test_gateway.py` now has 9 tests covering 502/504/404, auth, header pass-through, and request-id.
 - [ ] Add end-to-end cross-agent tests (FUS → CMS precheck, TAS → FUS enrollment, PAS → FLS outcomes, etc.).
-- [ ] Make the gateway proxy timeout configurable per agent.
-- [ ] Forward all upstream response headers (except hop-by-hop) so CSV/PDF exports work.
+- [x] Make the gateway proxy timeout configurable per agent. **Done:** `settings.agent_timeout(agent)` is wired.
+- [x] Forward all upstream response headers (except hop-by-hop) so CSV/PDF exports work. **Done:** `src/api/main.py` forwards all upstream headers except `host`, `content-encoding`, `transfer-encoding`, `connection`.
 - [x] Add request/response logging and request-id propagation. **Done:** gateway `src/api/main.py:118-161` generates/propagates `X-Request-ID` and returns it on every proxy response (including 502/504/404); root integration tests verify generation and propagation in `tests/integration/test_gateway.py:70-89`.
 
 *Sources:* `docs/BUG_AUDIT_REPORT.md` §6.1; `docs/DEPLOYMENT_READINESS.md` §Deployment Checklist.
@@ -78,7 +89,7 @@ These affect every engine and the gateway.
 
 - [ ] **Postgres:** provision a Postgres cluster; set per-agent `DATABASE_URL` to `postgresql+asyncpg://...` or `postgresql+psycopg://...`; add Alembic migrations for agents that need durable persistence.
 - [ ] **Redis:** provision a production Redis cluster; set per-agent `REDIS_URL`; remove in-memory fallback as the primary store.
-- [ ] **Kafka:** provision a Kafka cluster and Schema Registry; set `KAFKA_BOOTSTRAP_SERVERS` and topic ACLs; add `aiokafka` / `kafka-python` consumer groups for cross-agent event-driven flows.
+- [x] **Kafka:** baseline bus code-complete in all agents — producers, consumers, per-deal partition keys, canonical/short topic helpers, and in-memory fallback. **Remaining:** provision a real Kafka/Redpanda cluster, set `KAFKA_BOOTSTRAP_SERVERS` and topic ACLs, and run end-to-end cross-agent fan-out tests.
 - [ ] **S3 / Object Lock:** provision a WORM-capable bucket for 7-year audit retention of compliance ledgers, training datasets, and exported reports.
 - [ ] **Secrets manager:** move `API_KEY`, `DATABASE_URL`, Redis URL, Kafka bootstrap, and third-party service URLs out of `.env` files and into a vault.
 
@@ -109,7 +120,7 @@ These affect every engine and the gateway.
 
 ### Features still to implement
 
-- [ ] Production Kafka consumer groups for activity/alert ingestion and `compliance.signal` emission.
+- [x] Kafka bus baseline (producers, consumers, per-deal partition keys, in-memory fallback) — production broker and end-to-end fan-out still pending.
 - [ ] Real-time fair-lending batch analytics (Spark/Flink or warehouse SQL) and redlining detection.
 - [ ] Automated external regulatory feed monitoring (`app/regwatch.py`).
 - [ ] Full BI dashboard rendering beyond the JSON `GET /dashboard`.
@@ -148,7 +159,7 @@ These affect every engine and the gateway.
 
 - [ ] Integrate real MLflow model registry and artifact store.
 - [ ] Add feature store (Feast/Tecton) for point-in-time feature snapshots.
-- [ ] Add Kafka consumer for prediction/outcome/override events.
+- [x] Kafka consumer baseline for model retrain/outcome events — production broker and MLflow integration still pending.
 - [ ] Production persistence (Postgres + S3/DW) for predictions, labels, and datasets.
 - [ ] Shadow + canary deployment with gradual ramp and auto-rollback.
 - [ ] Propensity / exploration weighting for feedback bias mitigation.
@@ -188,7 +199,7 @@ These affect every engine and the gateway.
 
 - [x] Real Twilio/SendGrid/WhatsApp providers with mock fallback.
 - [ ] Add Temporal durable per-contact workflows with timers and signals.
-- [ ] Add Kafka consumer for `lead.scored` / `deal.stage_changed` / `contact.replied`.
+- [x] Kafka consumer baseline for `lead.scored` / `deal.stage_changed` / `contact.replied` — production broker still pending.
 - [x] Redis shared frequency-cap counters (`RedisFrequencyStore` optional via `CACHE_GATEWAY=redis`); consent cache P4.
 - [ ] Postgres durable persistence for definitions, enrollments, and ledger.
 - [ ] Engine 3 generative content integration for templates.
@@ -225,7 +236,7 @@ These affect every engine and the gateway.
 ### Features still to implement
 
 - [ ] Production data warehouse / Postgres persistence and materialized KPI refresh.
-- [ ] Near-real-time streaming KPIs (Flink/Kafka).
+- [x] Kafka producer/consumer baseline for streaming touches and outcomes — real DW/Flink still pending.
 - [ ] Row-level security with SSO/policy engine.
 - [ ] Scheduled email delivery of reports.
 - [ ] Forecast-attainment vs. Forecasting Engine integration.
@@ -241,7 +252,7 @@ These affect every engine and the gateway.
 - [x] Fix time-decay attribution `funded_at` reference.
 - [x] Fix `AttributionRepository` key type annotation.
 - [x] Simplify duplicate branches in `build_channel_effectiveness`.
-- [ ] Add locks around global in-memory repositories.
+- [x] Add locks around global in-memory repositories. **Done:** PAS repositories and service state now use `threading.RLock()`.
 
 *Sources:* `docs/BUG_AUDIT_REPORT.md` §4.
 
@@ -258,7 +269,7 @@ These affect every engine and the gateway.
 
 ### Features still to implement
 
-- [ ] Production Kafka consumer group with partition-keyed per-deal ordering.
+- [x] Kafka producer/consumer with partition-keyed per-deal ordering — real broker and Temporal still pending.
 - [ ] Real Temporal cluster deployment and worker pools.
 - [ ] Production persistence (Postgres + Redis + S3 exports).
 - [x] HTTP fallback CRM service client (`app/integrations/crm.py` calls `CRM_SERVICE_URL` when configured).

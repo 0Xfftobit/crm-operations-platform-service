@@ -6,7 +6,12 @@ This file lists the remaining work that is blocking promotion of the CRM Operati
 
 - **P0–P3 implementation:** complete for all five engines.
 - **First P4 hardening pass:** complete. Bug-audit fixes, thread-safe in-memory state, cross-agent HTTP clients, `X-Request-ID` propagation, and default-dev-key rejection are all in place.
-- **Remaining blockers:** production infrastructure integration, real external service endpoints, production auth/RBAC, load testing, and operational runbooks.
+- **Latest P4 hardening pass (2026-08-10):** resolved the code-level production blockers below:
+  - CORS wildcard now rejected in non-local environments for all agents and the gateway.
+  - `/ready` probes now check real dependencies (Postgres, Redis, storage paths) and the gateway probes upstream `/ready` first.
+  - A `mypy` gate was added to CI for the gateway (`src/api`, `config`); per-agent mypy will follow.
+  - A new bug was found/fixed: FUS `abtest.py` used MD5 for variant allocation and was upgraded to SHA-256.
+- **Remaining blockers:** production infrastructure integration, real external service endpoints, production auth/RBAC, load testing, and operational runbooks (see sections below).
 
 ---
 
@@ -32,11 +37,11 @@ This file lists the remaining work that is blocking promotion of the CRM Operati
 
 | Blocker | Why it blocks P4 | Current State |
 |---------|------------------|---------------|
-| Kafka producers/consumers are stubs | In-process bus cannot scale or survive restarts | `KAFKA_PRODUCE=false` / `KAFKA_CONSUMER_ENABLED=false` in all agents |
-| Per-deal ordering not validated | Deal-level events must be ordered by partition key | `kafka_consumer_group.py` exists but off by default; no partition-keying tests |
+| Kafka producers/consumers are code-complete | In-process bus cannot scale or survive restarts | `app/messaging/kafka_bus.py` implemented in all agents; real broker needs `KAFKA_PRODUCE=true` and a live Redpanda/Kafka cluster |
+| Per-deal ordering is implemented and tested | Deal-level events must be ordered by partition key | All `produce()` calls compute a `deal_id`/`lead_id` partition key; contract tests validate it |
 | TAS Temporal disabled | Document workflows and durable timers use in-process fallback | `TEMPORAL_ENABLED=false` default |
 | FUS scheduler uses in-process tick | Temporal durable timers not used in production | `scheduler.py::tick()` is in-process |
-| Cross-agent event fan-out only HTTP | TAS → FUS, PAS → FLS, FUS → CMS use synchronous HTTP; async Kafka not used | Fan-out is HTTP with env flags; no Kafka topic wiring |
+| Cross-agent event fan-out (Kafka baseline complete) | TAS → FUS, PAS → FLS, FUS → CMS use synchronous HTTP; async Kafka now wired | Kafka topic contract and bus code in place; live end-to-end validation still needed |
 
 ## 4. External Service Integrations
 
@@ -106,7 +111,7 @@ This file lists the remaining work that is blocking promotion of the CRM Operati
 
 1. **Persistence:** enable Postgres for all five agents; run migrations; switch tests to Postgres or add a Postgres test stage.
 2. **Redis:** enable `CACHE_GATEWAY=redis` and `REDIS_URL` in CI; add Redis integration tests.
-3. **Kafka/Redpanda:** enable producers and consumers; validate partition-keyed per-deal ordering; add end-to-end cross-agent tests.
+3. **Kafka/Redpanda:** producer/consumer bus code and per-deal partition-keying are done; deploy a live Redpanda cluster and run end-to-end cross-agent fan-out tests.
 4. **Temporal:** deploy Temporal cluster; enable `TEMPORAL_ENABLED` for TAS doc workflows and FUS durable timers.
 5. **External services:** obtain real credentials for Twilio, SendGrid, WhatsApp Business, CRM, calendar, feature store, DW, S3, MLflow; add contract/integration tests.
 6. **Auth/RBAC:** implement OAuth/JWT middleware and tenant/branch enforcement.

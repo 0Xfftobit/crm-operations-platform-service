@@ -1,8 +1,8 @@
 # Engine Testing Results — All CRM AI Agents
 
-**Run date:** 2026-08-07  
+**Run date:** 2026-08-10  
 **Tested by:** Devin (per Charles' request)  
-**Scope:** Run the documented test suites for all five engines (FLS, PAS, CMS, FUS, TAS) and realistic synthetic-data smoke tests against the implemented Feedback Loop System (FLS) and Performance Analytics System (PAS) engines.
+**Scope:** Run the documented test suites for all five engines (FLS, PAS, CMS, FUS, TAS) and realistic synthetic-data smoke tests against the implemented Feedback Loop System (FLS) and Performance Analytics System (PAS) engines. This update reflects the additional security, Redis/WORM, coverage, Kafka contract, and cross-agent client tests added after P4 hardening.
 
 > **Note on data:** No production/real data file was present in the repository or workspace, so the smoke tests were executed with a realistic synthetic CRM dataset (100 contacts, 4 channels, 2 teams, 5 reps, funded/lost outcomes, campaign costs, and finance SoT records). The unit/functional test suites use their own fixture data.
 
@@ -17,7 +17,7 @@ cd src/agents/feedback_loop
 uv run pytest tests -v
 ```
 
-**Result:** `25 passed, 1 warning in 7.64s`
+**Result:** `63 passed, 11 warnings in 15.43s`
 
 | Class | Scope | Count |
 |-------|-------|-------|
@@ -28,6 +28,11 @@ uv run pytest tests -v
 | `TestRetraining` | Dataset assembly, model training, promotion, lineage, fairness gate | 3 |
 | `TestABTest` | Experiment creation, consistent allocation, power analysis, split rounding, guardrail fallback, exact drift window, guardrail early stop | 6 |
 | `TestSubtasks` | Performance retrain triggers, data validation, retraining event logs | 3 |
+| `test_security` | CORS wildcard / default API key rejection in non-local envs | 4 |
+| `test_disk_persistence` | `STORAGE_BACKEND=disk` writes/loads dataset and model artifacts | 1 |
+| `test_retraining_rejections_and_triggers` | Insufficient samples, class imbalance, missing values, auto-retrain, drift | 8 |
+| `test_abtest_and_feedback` | A/B guardrail, promotion, orphan feedback, match rate, feedback events | 9 |
+| `test_kafka_bus` | Kafka contract: canonical/short topics, partition key, producer/consumer, dead letter | 16 |
 
 ### 1.2 Performance Analytics System (`src/agents/performance_analytics`)
 
@@ -36,7 +41,7 @@ cd src/agents/performance_analytics
 uv run pytest tests -v
 ```
 
-**Result:** `42 passed, 1 warning in 4.78s`
+**Result:** `91 passed, 1 warning in 7.40s`
 
 | Class | Scope | Count |
 |-------|-------|-------|
@@ -54,6 +59,11 @@ uv run pytest tests -v
 | `TestReports` | Scheduled reports, CSV/PDF export | 4 |
 | `TestABUplift` | Treatment vs control conversion lift with p-value | 1 |
 | `test_bug_audit` | ISO reconciliation, `_in_period` ISO, time-decay reference, attribution keys, concurrent repository safety | 7 |
+| `test_security_and_rls` | CORS / default key hardening, `parse_role_headers`, `_rls_filter` | 10 |
+| `test_attribution_advanced` | Time-decay, 90-day lookback, Shapley >7 channels, Markov removal effect | 6 |
+| `test_anomaly_and_reconciliation` | Anomaly detection, threshold alerts, ISO-8601 `P30D`, drift tolerance | 8 |
+| `test_feedback_client_and_reports` | Fan-out client headers, scheduled report format override, PDF/CSV export | 11 |
+| `test_kafka_bus` | Kafka contract: canonical/short, partition key, producer/consumer, dead letter | 14 |
 
 ### 1.3 Root Integration Tests
 
@@ -62,7 +72,7 @@ cd /Users/macbookpro/crequity/crm_op_service/crm-operations-platform-service
 PYTHONPATH=. uv run pytest tests -v
 ```
 
-**Result:** `2 passed, 2 warnings in 0.84s`
+**Result:** `9 passed, 1 warning in 0.71s`
 
 The `PYTHONPATH=.` export was required because `tests/integration/test_gateway.py` imports `from src.api.main import app`.
 
@@ -177,7 +187,7 @@ cd src/agents/compliance_monitor
 uv run pytest tests -v
 ```
 
-**Result:** `106 passed, 1 warning in 6.30s`
+**Result:** `152 passed, 1 warning in 5.44s`
 
 | Class / Module | Scope | Count |
 |----------------|-------|-------|
@@ -189,15 +199,20 @@ uv run pytest tests -v
 | `test_fairness` | 4/5ths selection-rate ratio, pass/fail, disparity cases | 4 |
 | `test_gaps` | Policy overrides, PII blocking, retention/erasure, regulation changes, integrity, PDF export | 11 |
 | `test_health` | Health, readiness, OpenAPI, CORS, settings | 5 |
-| `test_kafka_spark_cache` | Kafka producer/consumer, poison messages, batch disparity, cache | 8 |
+| `test_kafka_spark_cache` | Kafka producer/consumer, poison messages, batch disparity, cache | 10 |
 | `test_lifecycle_latency` | Latency budget, cold-tier archive, purge, integrity | 7 |
 | `test_new_tiers` | Sequence-gap, heartbeat, dead-letter, HTTP poll, tracing, stage requirements | 8 |
 | `test_persistence_sql` | Consent/audit persistence, tamper detection, SQL workflow | 7 |
 | `test_precheck` | Missing consent, opt-out/DNC, quiet hours, CAN-SPAM, marketing alerts | 6 |
 | `test_rules` | Two-step approval, version increments, emergency override, history | 7 |
 | `test_worm_merkle` | Write-once mirror, S3 object lock, Merkle root, inclusion proofs | 7 |
+| `test_security_config` | Default API key / wildcard CORS rejection, local/test allowance | 11 |
+| `test_redis_consent_cache` | `CACHE_GATEWAY=redis` TTL, invalidation, broker-fallback | 5 |
+| `test_worm_coldstore_local` | Local WORM mirror, cold-store archive, Merkle anchor/purge | 6 |
+| `test_coverage_concurrency_batch` | HTTP poll, coverage/sweep, 4/5ths floor, spark batch, concurrency | 10 |
+| `test_kafka_bus` | Kafka contract: canonical/short, partition key, producer/consumer, dead letter | 11 |
 
-**Fix applied:** `test_new_tiers.py::test_tracing_enabled_instruments_app` failed because the OTel packages were not in the default test environment. Added `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http`, and `opentelemetry-instrumentation-fastapi` to the `dev` dependency group in `src/agents/compliance_monitor/pyproject.toml`, then re-ran the suite. Result: `106 passed`.
+**Fix applied:** `test_new_tiers.py::test_tracing_enabled_instruments_app` failed because the OTel packages were not in the default test environment. Added `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http`, and `opentelemetry-instrumentation-fastapi` to the `dev` dependency group in `src/agents/compliance_monitor/pyproject.toml`, then re-ran the suite. Result: `152 passed`.
 
 ### 5.2 Follow-up Sequences Engine (`src/agents/follow_up_sequences`)
 
@@ -206,7 +221,7 @@ cd src/agents/follow_up_sequences
 uv run pytest tests -v
 ```
 
-**Result:** `50 passed, 1 warning in 0.81s`
+**Result:** `96 passed, 1 warning in 1.21s`
 
 | Class / Module | Scope | Count |
 |----------------|-------|-------|
@@ -216,8 +231,13 @@ uv run pytest tests -v
 || `test_cross_agent` | CMS precheck client sends `X-API-Key` and `X-Request-ID` | 1 |
 || `test_bug_audit` | UTC frequency keys, thread-safe `FrequencyStore`/`events`/`notifications`/`providers` | 5 |
 | `test_pipeline` | Personalization, quiet hours, consent, reply/convert/opt-out, duplicate enrollment, frequency cap, branching, lead-scored trigger, bounce/complaint suppression, owner notification | 18 |
+| `test_config_hardening` | Default API key / wildcard CORS rejection in non-local envs | 4 |
+| `test_redis_frequency_store` | `RedisFrequencyStore` per-sequence caps with fake Redis | 5 |
+| `test_provider_resilience` | Provider `deliver()` retry, exponential backoff, rate-limit | 6 |
+| `test_p4_gaps` | Suppression webhook, owner reply, A/B SHA-256, CMS precheck client | 8 |
+| `test_kafka_bus` | Kafka contract: canonical/short, partition key, producer/consumer, dead letter | 13 |
 
-**Fix applied:** `test_pipeline.py::test_branch_no_open_takes_path_b_after_window` failed because `_ledger` in `src/agents/follow_up_sequences/app/service.py` stamped `sent_at` with `_now()` (wall-clock time) instead of the deterministic `now` passed through the pipeline. This broke elapsed-time branch evaluation when the test used a frozen test clock. Updated `_ledger` to accept and use an optional `now` parameter and wired it through all `_process_send` call sites. Result: `50 passed`.
+**Fix applied:** `test_pipeline.py::test_branch_no_open_takes_path_b_after_window` failed because `_ledger` in `src/agents/follow_up_sequences/app/service.py` stamped `sent_at` with `_now()` (wall-clock time) instead of the deterministic `now` passed through the pipeline. This broke elapsed-time branch evaluation when the test used a frozen test clock. Updated `_ledger` to accept and use an optional `now` parameter and wired it through all `_process_send` call sites. Result: `96 passed`.
 
 ### 5.3 Task Automation Engine (`src/agents/task_automation`)
 
@@ -226,7 +246,7 @@ cd src/agents/task_automation
 uv run pytest tests -v
 ```
 
-**Result:** `78 passed, 1 skipped, 1 warning in 5.93s`
+**Result:** `129 passed, 1 skipped, 1 warning in 6.47s`
 
 | Class / Module | Scope | Count |
 |----------------|-------|-------|
@@ -242,6 +262,10 @@ uv run pytest tests -v
 | `test_requirements` | Pre-approval acceptance, idempotency, dry-run + canary, ledger hash, LLM write block, JSONLogic, Kafka stub, DLQ replay, requirements matrix | 10 |
 | `test_temporal_activities` | Retry policy, activity retries, connector via rule engine | 4 |
 | `test_vision` | Pre-approval compound automation, idempotency, dry-run, rule publish, ledger provenance, event latency | 6 |
+| `test_config_security` | Default API key / wildcard CORS rejection, local/test allowance | 4 |
+| `test_llm_client` | OpenAI-compatible completion, JSON/classify fallback, fenced JSON, HTTP errors | 16 |
+| `test_integration_guards` | CRM/calendar/feature-store fallbacks, FUS fan-out, DLQ replay, loop/canary guards | 24 |
+| `test_kafka_contract` | Kafka canonical/short topics, partition key, real producer/consumer, degrade | 7 |
 
 **No fixes required.** One persistence test is skipped because it requires a live Postgres database (`test_postgres_ledger_unique_constraint`); all other tests pass.
 
@@ -252,7 +276,7 @@ cd /Users/macbookpro/crequity/crm_op_service/crm-operations-platform-service
 PYTHONPATH=. uv run pytest tests -v
 ```
 
-**Result:** `2 passed, 2 warnings in 1.07s`
+**Result:** `9 passed, 1 warning in 0.71s`
 
 The gateway `/health` and `/agents` discovery endpoints return all five agents, confirming the inter-agent HTTP routing layer is wired.
 
@@ -274,10 +298,10 @@ In addition to the unit/functional suites, each new agent was exercised end-to-e
 
 | Engine | Unit Tests | Smoke / Real-Data Test | Status |
 |--------|------------|------------------------|--------|
-| Feedback Loop System | 25/25 passed | Capture, metrics, drift, retrain, lineage, A/B promotion operational | ✅ Ready |
-| Performance Analytics System | 42/42 passed | KPIs, funnel, scorecards, attribution, reconciliation, alerts, CSV export operational, bug-audit ISO/time-decay/locking | ✅ Ready |
-| Compliance Monitor System | 106/106 passed | Unit suite + API smoke: precheck, audit, fairness, disclosures, PII, retention, rule workflow | ✅ Ready |
-| Follow-up Sequences Engine | 50/50 passed | Unit suite + API smoke: enrollment, guardrails, branching, reply/convert/opt-out, frequency cap, bug-audit timezone/locking, analytics | ✅ Ready |
-| Task Automation Engine | 78 passed, 1 skipped | Unit suite + API smoke: rule engine, stage-driven task, business hours, dashboard, blast radius, bug-audit trigger-id/locking | ✅ Ready |
+| Feedback Loop System | 63/63 passed | Capture, metrics, drift, retrain, lineage, A/B promotion operational | ✅ Ready |
+| Performance Analytics System | 91/91 passed | KPIs, funnel, scorecards, attribution, reconciliation, alerts, CSV export operational, bug-audit ISO/time-decay/locking | ✅ Ready |
+| Compliance Monitor System | 152/152 passed | Unit suite + API smoke: precheck, audit, fairness, disclosures, PII, retention, rule workflow | ✅ Ready |
+| Follow-up Sequences Engine | 96/96 passed | Unit suite + API smoke: enrollment, guardrails, branching, reply/convert/opt-out, frequency cap, bug-audit timezone/locking, analytics | ✅ Ready |
+| Task Automation Engine | 129 passed, 1 skipped | Unit suite + API smoke: rule engine, stage-driven task, business hours, dashboard, blast radius, bug-audit trigger-id/locking | ✅ Ready |
 
-All five engines now have passing unit/functional test suites and realistic API smoke tests. Two small bugs were identified and fixed during testing: FLS drift escalation (previous thread) and the FUS `sent_at` branch-timing bug, plus the CMS missing OTel test dependency. No external LLM or data-provider API keys are required for the current in-memory/stub implementations.
+All five engines now have passing unit/functional test suites and realistic API smoke tests. Since the original run, additional P4 hardening has been added and verified: CORS wildcard / default API key rejection, Redis-backed caches, WORM/cold-store, 4/5ths coverage batch fairness, Kafka contract bus for all agents (producers, consumers, per-deal partition keys, graceful in-memory fallback), TAS LLM client integration, and cross-agent HTTP client propagation of `X-API-Key` and `X-Request-ID`. A handful of logging and validation bugs were also fixed in the process. No external LLM or data-provider API keys are required for the current in-memory/stub implementations.
