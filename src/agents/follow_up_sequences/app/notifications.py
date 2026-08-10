@@ -68,9 +68,9 @@ def notify_owner_of_reply(contact_id: str, owner_id: str, *, enrollment_id: str,
                 data = resp.json()
                 data.setdefault("provider", "notification_http")
                 return data
-            logger.warning("notify_owner_failed", status=resp.status_code, body=resp.text)
+            logger.warning("notify_owner_failed: status=%s body=%s", resp.status_code, resp.text)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("notify_owner_error", error=str(exc))
+            logger.warning("notify_owner_error: %s", exc)
 
     with _lock:
         _log.append(payload)

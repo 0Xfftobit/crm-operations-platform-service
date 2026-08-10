@@ -27,6 +27,7 @@ def _reset_settings():
 def _reset_state():
     """Clear repositories, events, providers, and frequency counters between tests (singletons)."""
     from app import events, frequency, providers
+    from app.messaging import kafka_bus
     from app.repositories import reset_repositories
 
     def _clean():
@@ -34,6 +35,7 @@ def _reset_state():
         events.reset_events()
         providers.reset()
         frequency.reset_store()
+        kafka_bus.reset_kafka_bus()
 
     _clean()
     yield

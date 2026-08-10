@@ -220,6 +220,7 @@ redis = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiokafka" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -245,6 +246,7 @@ provides-extras = ["postgres", "redis", "kafka", "otel"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "aiokafka", specifier = ">=0.11" },
     { name = "pytest", specifier = ">=8.3.0" },
     { name = "ruff", specifier = ">=0.8.0" },
 ]

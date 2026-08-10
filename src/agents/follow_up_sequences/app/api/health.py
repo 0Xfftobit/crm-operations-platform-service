@@ -2,6 +2,7 @@
 from fastapi import APIRouter
 
 from app.core.config import get_settings
+from app.frequency import redis_health
 
 router = APIRouter(tags=["health"])
 
@@ -20,4 +21,6 @@ def ready() -> dict:
         "env": s.env,
         "storage": s.storage_gateway,
         "uses_sql": s.uses_sql,
+        "redis": redis_health(),
+        "precheck_enabled": s.precheck_enabled,
     }

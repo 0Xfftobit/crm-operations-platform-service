@@ -16,6 +16,6 @@ def allocate(step: Step, enrollment_id: str) -> tuple[str, str]:
     if not step.variants:
         return "", step.template
     names = sorted(step.variants)
-    idx = int(hashlib.md5(f"{step.id}:{enrollment_id}".encode()).hexdigest(), 16) % len(names)
+    idx = int(hashlib.sha256(f"{step.id}:{enrollment_id}".encode()).hexdigest(), 16) % len(names)
     name = names[idx]
     return name, step.variants[name]

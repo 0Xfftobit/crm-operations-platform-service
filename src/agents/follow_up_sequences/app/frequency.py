@@ -186,6 +186,14 @@ def _create_store() -> FrequencyStore:
     return FrequencyStore()
 
 
+def redis_health() -> dict[str, str]:
+    """Best-effort Redis connectivity check for /ready probes."""
+    settings = get_settings()
+    if not settings.uses_cache:
+        return {"status": "disabled"}
+    return {"status": "ok"} if _redis_client() is not None else {"status": "unavailable"}
+
+
 _store: FrequencyStore | None = None
 _store_lock = RLock()
 

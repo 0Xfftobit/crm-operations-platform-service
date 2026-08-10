@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     sequence_source_timeout: float = Field(20.0, alias="SEQUENCE_SOURCE_TIMEOUT")
     kafka_bootstrap_servers: str = Field("localhost:9092", alias="KAFKA_BOOTSTRAP_SERVERS")
     kafka_topic: str = Field("followup-events", alias="KAFKA_TOPIC")   # inbound (subscribed)
+    kafka_produce: bool = Field(False, alias="KAFKA_PRODUCE")
+    kafka_consumer_enabled: bool = Field(False, alias="KAFKA_CONSUMER_ENABLED")
+    kafka_consumer_group: str = Field("followup-sequence", alias="KAFKA_CONSUMER_GROUP")
+    kafka_topics: CsvList = Field(
+        default_factory=lambda: [
+            "crm.deal.stage_changed",
+            "crm.lead.scored",
+            "crm.nba.recommended",
+        ],
+        alias="KAFKA_TOPICS",
+    )
 
     # ── Cross-agent compliance precheck (CMS) ──────────────────────────────
     precheck_enabled: bool = Field(False, alias="FUS_PRECHECK_ENABLED")
@@ -100,7 +111,15 @@ class Settings(BaseSettings):
             raise ValueError("Default dev API key is not allowed in non-local environments")
         return self
 
-    @field_validator("cors_origins", mode="before")
+    @model_validator(mode="after")
+    def _reject_wildcard_cors_in_prod(self) -> "Settings":
+        env = os.environ.get("ENV", self.env).lower()
+        allowed = {"local", "dev", "development", "test"}
+        if env not in allowed and any(o == "*" for o in self.cors_origins):
+            raise ValueError("Wildcard CORS origin (*) is not allowed in non-local environments")
+        return self
+
+    @field_validator("cors_origins", "kafka_topics", mode="before")
     @classmethod
     def _split_list(cls, v: object) -> object:
         """Accept a JSON array OR a comma-separated string for list env vars."""

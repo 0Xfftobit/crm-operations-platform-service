@@ -11,6 +11,8 @@ from threading import RLock
 
 import structlog
 
+from app.messaging import kafka_bus
+
 logger = structlog.get_logger(__name__)
 
 # consumed
@@ -38,6 +40,9 @@ def publish(event_type: str, payload: dict) -> None:
             "payload": payload,
             "at": datetime.now(UTC).isoformat(),
         })
+    kafka_bus.produce_sync(
+        kafka_bus.canonical_topic(event_type), payload, key=kafka_bus.partition_key(payload)
+    )
     logger.info("event", event_type=event_type)
 
 
