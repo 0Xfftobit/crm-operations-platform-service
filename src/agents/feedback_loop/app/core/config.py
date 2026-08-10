@@ -56,12 +56,44 @@ class Settings(BaseSettings):
     auto_retrain_enabled: bool = Field(True, alias="AUTO_RETRAIN_ENABLED")
     auto_retrain_risk_class: str = Field("low", alias="AUTO_RETRAIN_RISK_CLASS")
 
+    # Kafka (optional — bus degrades to in-process log when disabled/unavailable)
+    kafka_bootstrap_servers: str = Field("localhost:9092", alias="KAFKA_BOOTSTRAP_SERVERS")
+    kafka_produce: bool = Field(False, alias="KAFKA_PRODUCE")
+    kafka_consumer_enabled: bool = Field(False, alias="KAFKA_CONSUMER_ENABLED")
+    kafka_consumer_group: str = Field("crequity-feedback-loop", alias="KAFKA_CONSUMER_GROUP")
+    kafka_topics: CsvList = Field(
+        default_factory=lambda: [
+            "crm.outcome.funded",
+            "crm.outcome.lost",
+            "crm.outreach.converted",
+        ],
+        alias="KAFKA_TOPICS",
+    )
+
+    @field_validator("kafka_topics", mode="before")
+    @classmethod
+    def _split_topics(cls, v: object) -> object:
+        if isinstance(v, str):
+            s = v.strip()
+            if s.startswith("["):
+                return json.loads(s)
+            return [x.strip() for x in s.split(",") if x.strip()]
+        return v
+
     @model_validator(mode="after")
     def _reject_default_key_in_prod(self) -> "Settings":
         env = os.environ.get("ENV", self.env).lower()
         allowed = {"local", "dev", "development", "test"}
         if self.api_key == "change-me-dev-key" and env not in allowed:
             raise ValueError("Default dev API key is not allowed in non-local environments")
+        return self
+
+    @model_validator(mode="after")
+    def _reject_wildcard_cors_in_prod(self) -> "Settings":
+        env = os.environ.get("ENV", self.env).lower()
+        allowed = {"local", "dev", "development", "test"}
+        if env not in allowed and any(o == "*" for o in self.cors_origins):
+            raise ValueError("Wildcard CORS origin (*) is not allowed in non-local environments")
         return self
 
     @field_validator("cors_origins", mode="before")

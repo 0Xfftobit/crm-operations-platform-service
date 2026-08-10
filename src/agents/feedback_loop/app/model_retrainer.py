@@ -18,6 +18,7 @@ from sklearn.preprocessing import StandardScaler
 from app import aggregator, drift
 from app.core.config import get_settings
 from app.domain.models import LineageReport, ModelVersion, RetrainingRun, TrainingDataset
+from app.messaging import kafka_bus
 from app.repositories import (
     get_dataset_repository,
     get_event_log_repository,
@@ -142,6 +143,13 @@ def assemble_training_dataset(
         raise ValueError(f"no usable training rows for engine '{engine_name}'")
 
     df = pd.DataFrame(rows)
+
+    # Data-quality gates must run before any imputation or split so that
+    # class imbalance and excessive missing values are detected honestly.
+    validation = validate_training_dataset(df)
+    if not validation["valid"]:
+        raise ValueError(f"training_data_validation_failed: {validation['issues']}")
+
     for col in sorted(feature_names):
         if col not in df.columns:
             df[col] = 0.0
@@ -190,10 +198,6 @@ def assemble_training_dataset(
     train_df = df[df["__split__"] == "train"]
     for feature in feature_names_list:
         drift.set_reference(engine_name, feature, train_df[feature].tolist())
-
-    validation = validate_training_dataset(df)
-    if not validation["valid"]:
-        raise ValueError(f"training_data_validation_failed: {validation['issues']}")
 
     return meta
 
@@ -446,6 +450,12 @@ def retrain_pipeline(
 
     if challenger.gate == "passed":
         promote_model(challenger.model_id)
+        kafka_bus.produce_model_retrained(
+            engine_name=engine_name,
+            model_id=challenger.model_id,
+            metrics=challenger.metrics,
+            dataset_id=dataset.dataset_id,
+        )
         run.outcome = "promoted"
         get_retrain_run_repository().add(run)
         get_event_log_repository().add(

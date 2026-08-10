@@ -10,6 +10,7 @@ from app.api.feedback import router as feedback_router
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.messaging import kafka_bus
 
 logger = structlog.get_logger(__name__)
 
@@ -23,7 +24,16 @@ async def lifespan(app: FastAPI):
         env=settings.env,
         storage=settings.storage_backend,
     )
+    producer_started = await kafka_bus.start_producer()
+    consumer_info = await kafka_bus.start_consumer()
+    logger.info(
+        "kafka_ready",
+        producer_started=producer_started,
+        consumer_status=consumer_info.get("status"),
+    )
     yield
+    await kafka_bus.stop_consumer()
+    await kafka_bus.stop_producer()
     logger.info("application_stopping", app_name=settings.app_name)
 
 
