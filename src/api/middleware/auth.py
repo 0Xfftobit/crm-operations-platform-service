@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.responses import Response
 
 from config.settings import get_settings
 
@@ -20,7 +21,7 @@ class GatewayAPIKeyMiddleware(BaseHTTPMiddleware):
     Public paths (``/health``, ``/ready``) are exempt.
     """
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         settings = get_settings()
         if request.url.path not in ("/health", "/ready", "/agents"):
             api_key = request.headers.get("X-API-Key")
