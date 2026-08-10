@@ -1,10 +1,23 @@
 """Liveness + readiness probes for the Performance Analytics System."""
 
+from pathlib import Path
+
 from fastapi import APIRouter
 
 from app.core.config import get_settings
 
 router = APIRouter(tags=["health"])
+
+
+def _storage_health(path: Path) -> dict[str, str]:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        test = path / ".ready_probe"
+        test.write_text("")
+        test.unlink()
+        return {"status": "ok"}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": str(exc)}
 
 
 @router.get("/health", summary="Liveness")
@@ -20,4 +33,6 @@ def ready() -> dict:
         "app": s.app_name,
         "env": s.env,
         "storage_backend": s.storage_backend,
+        "storage": _storage_health(s.data_path),
+        "outcome_fanout_enabled": s.outcome_fanout_enabled,
     }

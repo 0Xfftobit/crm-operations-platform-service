@@ -17,6 +17,7 @@ from app.domain.models import (
     ReportSchedule,
     TouchEvent,
 )
+from app.messaging import kafka_bus
 from app.pdf import build_csv, build_pdf
 from app.repositories import (
     get_alert_repository,
@@ -51,11 +52,15 @@ def seed() -> None:
 
 
 def ingest_touch(touch: TouchEvent) -> dict[str, Any]:
-    return metrics_collector.ingest_touch(touch)
+    result = metrics_collector.ingest_touch(touch)
+    kafka_bus.produce_touch(touch)
+    return result
 
 
 def ingest_outcome(outcome: OutcomeEvent) -> dict[str, Any]:
-    return metrics_collector.ingest_outcome(outcome)
+    result = metrics_collector.ingest_outcome(outcome)
+    kafka_bus.produce_outcome(outcome)
+    return result
 
 
 def ingest_campaign_cost(cost: CampaignCost) -> dict[str, Any]:

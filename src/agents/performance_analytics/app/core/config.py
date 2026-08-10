@@ -55,6 +55,21 @@ class Settings(BaseSettings):
     feedback_loop_api_key: str = Field("", alias="FEEDBACK_LOOP_API_KEY")
     feedback_loop_timeout: float = Field(5.0, alias="FEEDBACK_LOOP_TIMEOUT")
 
+    # ── Kafka event bus (lazy; in-memory fallback by default) ─────────────────
+    kafka_bootstrap_servers: str = Field("localhost:9092", alias="KAFKA_BOOTSTRAP_SERVERS")
+    kafka_produce: bool = Field(False, alias="KAFKA_PRODUCE")
+    kafka_consumer_enabled: bool = Field(False, alias="KAFKA_CONSUMER_ENABLED")
+    kafka_consumer_group: str = Field("performance-analytics", alias="KAFKA_CONSUMER_GROUP")
+    kafka_topics: CsvList = Field(
+        default_factory=lambda: [
+            "crm.outreach.sent",
+            "crm.outreach.converted",
+            "crm.outcome.funded",
+            "crm.outcome.lost",
+        ],
+        alias="KAFKA_TOPICS",
+    )
+
     @model_validator(mode="after")
     def _reject_default_key_in_prod(self) -> "Settings":
         env = os.environ.get("ENV", self.env).lower()
@@ -63,7 +78,15 @@ class Settings(BaseSettings):
             raise ValueError("Default dev API key is not allowed in non-local environments")
         return self
 
-    @field_validator("cors_origins", mode="before")
+    @model_validator(mode="after")
+    def _reject_wildcard_cors_in_prod(self) -> "Settings":
+        env = os.environ.get("ENV", self.env).lower()
+        allowed = {"local", "dev", "development", "test"}
+        if env not in allowed and any(o == "*" for o in self.cors_origins):
+            raise ValueError("Wildcard CORS origin (*) is not allowed in non-local environments")
+        return self
+
+    @field_validator("cors_origins", "kafka_topics", mode="before")
     @classmethod
     def _split_list(cls, v: object) -> object:
         if isinstance(v, str):

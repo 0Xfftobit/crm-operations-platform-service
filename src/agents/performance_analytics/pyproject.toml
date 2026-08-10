@@ -13,10 +13,15 @@ dependencies = [
     "httpx>=0.28.0",
 ]
 
+[project.optional-dependencies]
+# Kafka event bus (KAFKA_PRODUCE / KAFKA_CONSUMER_ENABLED) — async producer + consumer, lazy.
+kafka = ["aiokafka>=0.11"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3.0",
     "ruff>=0.8.0",
+    "aiokafka>=0.11",
 ]
 
 [build-system]

@@ -46,5 +46,5 @@ def fanout_outcome(outcome: OutcomeEvent, *, settings: Settings) -> dict | None:
             response.raise_for_status()
             return response.json()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("feedback_loop_fanout_failed", error=str(exc), url=url)
+        logger.warning("feedback_loop_fanout_failed: %s (url=%s)", str(exc), url)
         return None
