@@ -56,9 +56,9 @@ def apply_record_updates(
                 data.setdefault("provider", "crm_http")
                 data.setdefault("updated_at", datetime.now(UTC).isoformat())
                 return data
-            logger.warning("crm_update_failed", status=resp.status_code, body=resp.text)
+            logger.warning("crm_update_failed", extra={"status": resp.status_code, "body": resp.text})
         except Exception as exc:  # noqa: BLE001
-            logger.warning("crm_update_error", error=str(exc))
+            logger.warning("crm_update_error", extra={"error": str(exc)})
 
     return {
         "mutation_id": f"mut_{uuid4().hex[:12]}",
@@ -84,9 +84,9 @@ def assign_owner(*, lead_id: str, owner_id: str, reason: str | None = None) -> d
                 data.setdefault("provider", "crm_http")
                 data.setdefault("updated_at", datetime.now(UTC).isoformat())
                 return data
-            logger.warning("crm_assign_failed", status=resp.status_code, body=resp.text)
+            logger.warning("crm_assign_failed", extra={"status": resp.status_code, "body": resp.text})
         except Exception as exc:  # noqa: BLE001
-            logger.warning("crm_assign_error", error=str(exc))
+            logger.warning("crm_assign_error", extra={"error": str(exc)})
 
     return {
         "mutation_id": f"mut_{uuid4().hex[:12]}",
@@ -114,9 +114,9 @@ def post_note(*, lead_id: str, body: str, author: str = "system", visibility: st
                 data.setdefault("provider", "crm_http")
                 data.setdefault("posted_at", datetime.now(UTC).isoformat())
                 return data
-            logger.warning("crm_note_failed", status=resp.status_code, body=resp.text)
+            logger.warning("crm_note_failed", extra={"status": resp.status_code, "body": resp.text})
         except Exception as exc:  # noqa: BLE001
-            logger.warning("crm_note_error", error=str(exc))
+            logger.warning("crm_note_error", extra={"error": str(exc)})
 
     return {
         "note_id": f"note_{uuid4().hex[:12]}",

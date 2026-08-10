@@ -40,7 +40,7 @@ def stage_changed(lead_id: str, stage: str, *, tenant: str, settings: Settings) 
             response.raise_for_status()
             return response.json()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("fus_stage_changed_failed", error=str(exc), lead=lead_id, stage=stage)
+        logger.warning("fus_stage_changed_failed", extra={"error": str(exc), "lead": lead_id, "stage": stage})
         return None
 
 
@@ -63,5 +63,5 @@ def lead_scored(lead_id: str, score: float, sequence_id: str, *, tenant: str,
             response.raise_for_status()
             return response.json()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("fus_lead_scored_failed", error=str(exc), lead=lead_id, score=score)
+        logger.warning("fus_lead_scored_failed", extra={"error": str(exc), "lead": lead_id, "score": score})
         return None

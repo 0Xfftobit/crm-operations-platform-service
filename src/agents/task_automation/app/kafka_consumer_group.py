@@ -9,6 +9,7 @@ from threading import RLock
 from typing import Any
 
 from app.core.config import get_settings
+from app.messaging import kafka_bus
 from app.service import process_event
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,16 @@ _stop_event = threading.Event()
 _stats: dict[str, Any] = {"running": False, "messages_processed": 0, "errors": 0}
 
 _lock = RLock()
+
+
+def canonical_topic(topic: str) -> str:
+    """Return the canonical topic name (``crm.<short>``)."""
+    return kafka_bus.canonical_topic(topic)
+
+
+def short_topic(canonical: str) -> str:
+    """Return the short topic name from a canonical dotted topic."""
+    return kafka_bus.short_topic(canonical)
 
 
 def reset_kafka_consumer() -> None:
@@ -32,12 +43,13 @@ def consumer_stats() -> dict[str, Any]:
 
 
 def _process_record(topic: str, payload: dict[str, Any], *, offset: int, partition: int) -> None:
-    trigger_id = payload.get("trigger_id") or f"kafka:{topic}:{partition}:{offset}"
+    short = short_topic(topic)
+    trigger_id = payload.get("trigger_id") or f"kafka:{short}:{partition}:{offset}"
     payload = {**payload, "trigger_id": trigger_id}
     process_event(
-        topic=topic,
+        topic=short,
         payload=payload,
-        idempotency_key=f"kafka:{topic}:{offset}:{partition}:{trigger_id}",
+        idempotency_key=f"kafka:{short}:{offset}:{partition}:{trigger_id}",
         trigger_id=trigger_id,
         source="kafka",
     )
@@ -60,12 +72,13 @@ def _consumer_loop() -> None:
         auto_offset_reset="earliest",
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
     )
-    consumer.subscribe(list(settings.kafka_topics))
+    topics = [canonical_topic(t) for t in settings.kafka_topics]
+    consumer.subscribe(topics)
     with _lock:
         _stats["running"] = True
     logger.info(
         "kafka_consumer_started",
-        extra={"bootstrap": settings.kafka_bootstrap_servers, "group": settings.kafka_consumer_group},
+        extra={"bootstrap": settings.kafka_bootstrap_servers, "group": settings.kafka_consumer_group, "topics": topics},
     )
     try:
         while not _stop_event.is_set():

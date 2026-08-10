@@ -21,6 +21,7 @@ from app.api.triggers import router as triggers_router
 from app.api.vision import router as vision_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.messaging.kafka_bus import start_producer, stop_producer
 from app.pipeline import init_pipeline
 from app.scheduler import start_scheduler, stop_scheduler
 
@@ -47,6 +48,9 @@ async def lifespan(app: FastAPI):
         storage=settings.storage_backend,
         scheduler=settings.scheduler_enabled,
     )
+    producer_started = await start_producer()
+    if producer_started:
+        logger.info("kafka_producer_started", started=producer_started)
     await start_scheduler()
     init_pipeline()
     kafka = await start_kafka_consumer_async()
@@ -54,6 +58,7 @@ async def lifespan(app: FastAPI):
         logger.info("kafka_consumer_started", **kafka)
     yield
     await stop_kafka_consumer_async()
+    await stop_producer()
     await stop_scheduler()
     logger.info("application_stopping", app_name=settings.app_name)
 

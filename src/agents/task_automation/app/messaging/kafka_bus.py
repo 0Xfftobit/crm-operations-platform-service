@@ -1,13 +1,19 @@
-"""Kafka event bus — topic constants and in-process transport (§6)."""
+"""Kafka event bus — topic constants, in-process transport, and optional real broker (§6, §9)."""
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 from datetime import UTC, datetime
 from threading import RLock
 from typing import Any
 from uuid import uuid4
 
+from app.core.config import get_settings
+
 # Consumed topics (architecture §6)
 TOPIC_STAGE_CHANGED = "crm.deal.stage_changed"
+TOPIC_LEAD_ASSIGNED = "crm.lead.assigned"
 TOPIC_LEAD_SCORED = "crm.lead.scored"
 TOPIC_NBA_RECOMMENDED = "crm.nba.recommended"
 TOPIC_TASK_COMPLETED = "crm.task.completed"
@@ -22,6 +28,7 @@ TOPIC_AUTOMATION_FAILED = "crm.automation.failed"
 
 TOPIC_MAP: dict[str, str] = {
     "deal.stage_changed": TOPIC_STAGE_CHANGED,
+    "lead.assigned": TOPIC_LEAD_ASSIGNED,
     "lead.scored": TOPIC_LEAD_SCORED,
     "nba.recommended": TOPIC_NBA_RECOMMENDED,
     "task.completed": TOPIC_TASK_COMPLETED,
@@ -38,49 +45,185 @@ TOPIC_MAP: dict[str, str] = {
     "note.posted": "crm.note.posted",
 }
 
+_CANONICAL_TO_SHORT: dict[str, str] = {v: k for k, v in TOPIC_MAP.items()}
+
 _kafka_log: list[dict[str, Any]] = []
 _consumer_lag: int = 0
+_real_producer: Any | None = None
 
 _lock = RLock()
+logger = logging.getLogger(__name__)
 
 
 def reset_kafka_bus() -> None:
-    global _consumer_lag
+    """Clear the in-memory log and release any real producer (tests / shutdown)."""
+    global _consumer_lag, _real_producer
     with _lock:
         _kafka_log.clear()
         _consumer_lag = 0
+        if _real_producer is not None:
+            try:
+                _real_producer.close()
+            except Exception:
+                pass
+            _real_producer = None
 
 
 def canonical_topic(topic: str) -> str:
-    return TOPIC_MAP.get(topic, f"crm.{topic}")
+    """Return the canonical `crm.<short>` (or `compliance.<short>`) topic name."""
+    if topic in TOPIC_MAP:
+        return TOPIC_MAP[topic]
+    if topic.startswith("crm.") or topic.startswith("compliance."):
+        return topic
+    return f"crm.{topic}"
+
+
+def short_topic(canonical: str) -> str:
+    """Reverse a canonical dotted topic name back to the short form."""
+    if canonical in _CANONICAL_TO_SHORT:
+        return _CANONICAL_TO_SHORT[canonical]
+    if canonical.startswith("crm."):
+        return canonical[4:]
+    if canonical.startswith("compliance."):
+        return canonical[11:]
+    return canonical
 
 
 def partition_key(payload: dict[str, Any]) -> str:
-    """Per-deal ordering via deal_id partition key (§9)."""
+    """Per-deal ordering via ordered ID partition key (§9)."""
     return str(
         payload.get("deal_id")
         or payload.get("lead_id")
-        or payload.get("opportunity_id")
+        or payload.get("contact_id")
+        or payload.get("entity_id")
         or payload.get("id")
         or "unknown"
     )
 
 
-def publish_kafka(topic: str, payload: dict[str, Any], *, key: str | None = None) -> dict[str, Any]:
-    canonical = canonical_topic(topic)
-    pk = key or partition_key(payload)
+def _append_log(
+    topic: str,
+    payload: dict[str, Any],
+    *,
+    key: str,
+    transport: str = "in_process_bus",
+) -> dict[str, Any]:
     row = {
         "message_id": f"msg_{uuid4().hex[:12]}",
-        "topic": canonical,
-        "source_topic": topic,
-        "key": pk,
+        "topic": topic,
+        "source_topic": short_topic(topic),
+        "key": key,
         "payload": payload,
         "published_at": datetime.now(UTC).isoformat(),
-        "transport": "in_process_bus",
+        "transport": transport,
     }
     with _lock:
         _kafka_log.append(row)
     return row
+
+
+def _create_kafka_producer(bootstrap_servers: list[str]) -> Any:
+    """Lazy factory for the threaded KafkaProducer."""
+    from kafka import KafkaProducer
+
+    return KafkaProducer(
+        bootstrap_servers=bootstrap_servers,
+        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        acks="all",
+        retries=1,
+        request_timeout_ms=5000,
+    )
+
+
+def _send_sync(producer: Any, topic: str, key: str, payload: dict[str, Any]) -> Any:
+    """Send and await an ack synchronously; raises on send/timeout errors."""
+    future = producer.send(topic, key=key.encode("utf-8"), value=payload)
+    return future.get(timeout=5)
+
+
+async def start_producer() -> bool:
+    """Start the real Kafka producer when ``KAFKA_PRODUCE=true``.
+
+    Returns ``True`` when a real producer is available, ``False`` otherwise.
+    """
+    global _real_producer
+    settings = get_settings()
+    if not settings.kafka_produce:
+        logger.debug("kafka_producer_disabled")
+        return False
+    if _real_producer is not None:
+        return True
+    try:
+        _real_producer = await asyncio.to_thread(
+            _create_kafka_producer, settings.kafka_bootstrap_servers.split(",")
+        )
+    except Exception as exc:
+        logger.warning("kafka_producer_start_failed", extra={"error": str(exc)})
+        _real_producer = None
+        return False
+    logger.info("kafka_producer_started", extra={"bootstrap": settings.kafka_bootstrap_servers})
+    return True
+
+
+async def stop_producer() -> None:
+    """Stop the real Kafka producer if running."""
+    global _real_producer
+    if _real_producer is None:
+        return
+    try:
+        await asyncio.to_thread(_real_producer.close)
+    except Exception as exc:
+        logger.warning("kafka_producer_stop_failed", extra={"error": str(exc)})
+    finally:
+        _real_producer = None
+
+
+async def produce(
+    topic: str,
+    payload: dict[str, Any],
+    *,
+    key: str | None = None,
+) -> dict[str, Any] | None:
+    """Publish a message to the canonical topic; falls back to the in-memory bus."""
+    settings = get_settings()
+    canonical = canonical_topic(topic)
+    pk = key or partition_key(payload)
+    if settings.kafka_produce and _real_producer is not None:
+        try:
+            await asyncio.to_thread(_send_sync, _real_producer, canonical, pk, payload)
+            return _append_log(canonical, payload, key=pk, transport="kafka")
+        except Exception as exc:
+            logger.warning("kafka_produce_failed", extra={"topic": canonical, "error": str(exc)})
+    return _append_log(canonical, payload, key=pk, transport="in_process_bus")
+
+
+def produce_sync(
+    topic: str,
+    payload: dict[str, Any],
+    *,
+    key: str | None = None,
+) -> dict[str, Any] | None:
+    """Synchronous variant of :func:`produce` for non-async call sites."""
+    settings = get_settings()
+    canonical = canonical_topic(topic)
+    pk = key or partition_key(payload)
+    if settings.kafka_produce and _real_producer is not None:
+        try:
+            _send_sync(_real_producer, canonical, pk, payload)
+            return _append_log(canonical, payload, key=pk, transport="kafka")
+        except Exception as exc:
+            logger.warning("kafka_produce_sync_failed", extra={"topic": canonical, "error": str(exc)})
+    return _append_log(canonical, payload, key=pk, transport="in_process_bus")
+
+
+def publish_kafka(
+    topic: str,
+    payload: dict[str, Any],
+    *,
+    key: str | None = None,
+) -> dict[str, Any] | None:
+    """Legacy sync publish — keeps the original name as an alias to :func:`produce_sync`."""
+    return produce_sync(topic, payload, key=key)
 
 
 def consume_kafka(*, topic: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
@@ -107,9 +250,14 @@ def bus_stats() -> dict[str, Any]:
         topics: dict[str, int] = {}
         for m in _kafka_log:
             topics[m["topic"]] = topics.get(m["topic"], 0) + 1
+        transport = (
+            "kafka"
+            if (_real_producer is not None and get_settings().kafka_produce)
+            else "in_process_bus"
+        )
         return {
             "messages_total": len(_kafka_log),
             "consumer_lag": _consumer_lag,
             "topics": topics,
-            "transport": "in_process_bus",
+            "transport": transport,
         }

@@ -55,9 +55,9 @@ def create_calendar_event(
                 data.setdefault("provider", "calendar_http")
                 data.setdefault("created_at", datetime.now(UTC).isoformat())
                 return data
-            logger.warning("calendar_create_failed", status=resp.status_code, body=resp.text)
+            logger.warning("calendar_create_failed", extra={"status": resp.status_code, "body": resp.text})
         except Exception as exc:  # noqa: BLE001
-            logger.warning("calendar_create_error", error=str(exc))
+            logger.warning("calendar_create_error", extra={"error": str(exc)})
 
     return {
         "calendar_event_id": f"cal_{uuid4().hex[:12]}",

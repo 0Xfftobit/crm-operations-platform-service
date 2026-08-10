@@ -60,9 +60,9 @@ def fetch_features(
                 data = resp.json()
                 data.setdefault("_provider", "feature_store_http")
                 return data
-            logger.warning("feature_store_fetch_failed", status=resp.status_code, body=resp.text)
+            logger.warning("feature_store_fetch_failed", extra={"status": resp.status_code, "body": resp.text})
         except Exception as exc:  # noqa: BLE001
-            logger.warning("feature_store_fetch_error", error=str(exc))
+            logger.warning("feature_store_fetch_error", extra={"error": str(exc)})
 
     if product and "product" not in cached:
         cached["product"] = product

@@ -10,6 +10,7 @@ from app.messaging.kafka_bus import (
     TOPIC_AUTOMATION_FAILED,
     TOPIC_DOCUMENT_RECEIVED,
     TOPIC_DOCUMENT_REQUESTED,
+    TOPIC_LEAD_ASSIGNED,
     TOPIC_LEAD_SCORED,
     TOPIC_NBA_RECOMMENDED,
     TOPIC_RECORD_UPDATED,
@@ -56,6 +57,7 @@ def build_architecture_overview() -> dict[str, Any]:
         "messaging": {
             "consumed_topics": [
                 TOPIC_STAGE_CHANGED,
+                TOPIC_LEAD_ASSIGNED,
                 TOPIC_LEAD_SCORED,
                 TOPIC_NBA_RECOMMENDED,
                 TOPIC_TASK_COMPLETED,

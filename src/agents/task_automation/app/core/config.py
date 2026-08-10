@@ -61,10 +61,15 @@ class Settings(BaseSettings):
     integration_timeout_s: float = Field(5.0, alias="INTEGRATION_TIMEOUT_S", ge=0.5)
 
     kafka_bootstrap_servers: str = Field("localhost:9092", alias="KAFKA_BOOTSTRAP_SERVERS")
+    kafka_produce: bool = Field(False, alias="KAFKA_PRODUCE")
     kafka_consumer_group: str = Field("task-automation-engine", alias="KAFKA_CONSUMER_GROUP")
     kafka_consumer_enabled: bool = Field(False, alias="KAFKA_CONSUMER_ENABLED")
     kafka_topics: CsvList = Field(
-        default_factory=lambda: ["deal.stage_changed", "lead.assigned", "document.received"],
+        default_factory=lambda: [
+            "crm.deal.stage_changed",
+            "crm.lead.assigned",
+            "crm.document.received",
+        ],
         alias="KAFKA_TOPICS",
     )
     temporal_host: str = Field("localhost:7233", alias="TEMPORAL_HOST")
@@ -75,6 +80,10 @@ class Settings(BaseSettings):
     max_rule_chain_depth: int = Field(10, alias="MAX_RULE_CHAIN_DEPTH", ge=1)
     canary_default_percent: float = Field(1.0, alias="CANARY_DEFAULT_PERCENT", ge=0, le=100)
     llm_confidence_threshold: float = Field(0.85, alias="LLM_CONFIDENCE_THRESHOLD", ge=0, le=1)
+    llm_provider_url: str = Field("", alias="LLM_PROVIDER_URL")
+    llm_api_key: str = Field("", alias="LLM_API_KEY")
+    llm_model: str = Field("gpt-4o-mini", alias="LLM_MODEL")
+    llm_timeout_s: float = Field(10.0, alias="LLM_TIMEOUT_S", ge=1)
     mandatory_dry_run_before_publish: bool = Field(True, alias="MANDATORY_DRY_RUN_BEFORE_PUBLISH")
 
     idempotency_backend: str = Field("memory", alias="IDEMPOTENCY_BACKEND")
@@ -104,6 +113,14 @@ class Settings(BaseSettings):
         allowed = {"local", "dev", "development", "test"}
         if self.api_key == "change-me-dev-key" and env not in allowed:
             raise ValueError("Default dev API key is not allowed in non-local environments")
+        return self
+
+    @model_validator(mode="after")
+    def _reject_wildcard_cors_in_prod(self) -> "Settings":
+        env = os.environ.get("ENV", self.env).lower()
+        allowed = {"local", "dev", "development", "test"}
+        if env not in allowed and any(o == "*" for o in self.cors_origins):
+            raise ValueError("Wildcard CORS origin (*) is not allowed in non-local environments")
         return self
 
     @field_validator("cors_origins", "round_robin_agents", "kafka_topics", mode="before")
