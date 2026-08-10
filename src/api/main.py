@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 
 from config.settings import Settings, get_settings
 
@@ -59,14 +60,23 @@ app = FastAPI(
     summary="Feedback loop, performance analytics, compliance, task automation, follow-ups.",
 )
 
+# Restrictive CORS: configured origins only; wildcard rejected by Settings validator in prod.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/health")
-async def health():
+async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/agents")
-async def agents(settings: Settings = Depends(get_settings)):
+async def agents(settings: Settings = Depends(get_settings)) -> dict[str, dict[str, str | float]]:
     return {
         a: {
             "slug": s,
@@ -78,8 +88,9 @@ async def agents(settings: Settings = Depends(get_settings)):
 
 
 @app.get("/ready")
-async def ready(settings: Settings = Depends(get_settings)):
-    out, ready_ok = {}, True
+async def ready(settings: Settings = Depends(get_settings)) -> dict[str, str | dict[str, str]]:
+    out: dict[str, str] = {}
+    ready_ok = True
     async with httpx.AsyncClient(timeout=3.0) as c:
         for a in AGENTS:
             url = _upstream(a, settings)
@@ -87,8 +98,9 @@ async def ready(settings: Settings = Depends(get_settings)):
                 out[a] = "unset"
                 ready_ok = False
                 continue
-            status_text = None
-            for hp in ("/api/v1/health", "/health", "/healthz"):
+            status_text: str | None = None
+            # Probe /ready first so we surface dependency health, then fall back to /health.
+            for hp in ("/api/v1/ready", "/api/v1/health", "/health", "/healthz"):
                 try:
                     r = await c.get(url.rstrip("/") + hp)
                     if r.status_code == 200:
@@ -97,7 +109,7 @@ async def ready(settings: Settings = Depends(get_settings)):
                     status_text = f"http {r.status_code}"
                 except Exception as e:  # noqa: BLE001
                     status_text = f"down: {type(e).__name__}"
-            out[a] = status_text
+            out[a] = status_text or "unknown"
             if status_text != "ok":
                 ready_ok = False
     return {"status": "ok" if ready_ok else "degraded", "agents": out}
@@ -111,7 +123,7 @@ _SLUG_TO_AGENT = {s: a for a, s in AGENTS.items()}
     methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     dependencies=[Depends(require_api_key)],
 )
-async def proxy(slug: str, path: str, request: Request, settings: Settings = Depends(get_settings)):
+async def proxy(slug: str, path: str, request: Request, settings: Settings = Depends(get_settings)) -> Response:
     agent = _SLUG_TO_AGENT.get(slug)
     if not agent:
         return Response(status_code=404, content=f"unknown agent '{slug}'")
@@ -147,10 +159,16 @@ async def proxy(slug: str, path: str, request: Request, settings: Settings = Dep
                 headers=headers,
             )
     except httpx.TimeoutException:
-        logger.warning("gateway_proxy_timeout", agent=agent, url=url, timeout=timeout)
+        logger.warning(
+            "gateway_proxy_timeout",
+            extra={"agent": agent, "url": url, "timeout": timeout},
+        )
         return Response(status_code=504, content="upstream timeout")
     except httpx.ConnectError as e:
-        logger.warning("gateway_proxy_connect_error", agent=agent, url=url, error=str(e))
+        logger.warning(
+            "gateway_proxy_connect_error",
+            extra={"agent": agent, "url": url, "error": str(e)},
+        )
         return Response(status_code=502, content=f"upstream unreachable: {e}")
 
     response_headers = {

@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     gateway_timeout: float = Field(30.0, alias="GATEWAY_TIMEOUT")
     # When true (default), the default dev key is rejected in non-debug envs.
     reject_default_key: bool = Field(True, alias="GATEWAY_REJECT_DEFAULT_KEY")
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000"], alias="CORS_ORIGINS"
+    )
 
     # Upstream agent URLs and per-agent timeouts.
     compliance_monitor_url: str = Field("", alias="COMPLIANCE_MONITOR_URL")
@@ -41,6 +44,15 @@ class Settings(BaseSettings):
             and os.environ.get("ENV", "local").lower() not in ("local", "dev", "development")
         ):
             raise ValueError("Default dev API key is not allowed in non-local environments")
+        return self
+
+    @model_validator(mode="after")
+    def _reject_wildcard_cors_in_prod(self) -> Settings:
+        if (
+            os.environ.get("ENV", "local").lower() not in ("local", "dev", "development")
+            and any(o == "*" for o in self.cors_origins)
+        ):
+            raise ValueError("Wildcard CORS origin (*) is not allowed in non-local environments")
         return self
 
     def agent_urls(self) -> dict[str, str]:
