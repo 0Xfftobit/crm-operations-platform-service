@@ -17,24 +17,33 @@ This document tracks what has been implemented against the CMS ticket (`docs/tic
 
 The latest P4 hardening pass completed the following CMS pieces and brings the test suite to **152 passing tests** with `ruff` clean:
 
-- **Kafka producer/consumer contract** (`app/kafka_bus.py`) with canonical/short topic names, **per-deal partition keys** (`deal_id` → `lead_id` → `contact_id` → `entity_id` → `id`), and **in-memory fallback** when the broker is unavailable or Kafka is disabled. New broker-free contract tests in `tests/test_kafka_bus.py` (11 tests) cover canonical topics, partition-key precedence, producer/consumer graceful degradation, CRM-surveillance dispatch, and bus stats/reset.
-- **Kafka + Spark + cache integration** covered by `tests/test_kafka_spark_cache.py` (10 tests): activity ingestion, CRM stage-changed surveillance, batch redlining aggregation, and Redis-backed cache fallback.
+- **Kafka producer/consumer contract** (`app/kafka_bus.py`) is code-complete with canonical/short topic names, **per-deal partition keys** (`deal_id` → `lead_id` → `contact_id` → `entity_id` → `id`), and **in-memory fallback** when the broker is unavailable or Kafka is disabled. New broker-free contract tests in `tests/test_kafka_bus.py` (11 tests) cover canonical topics, partition-key precedence, producer/consumer graceful degradation, CRM-surveillance dispatch, and bus stats/reset. Real broker deployment and end-to-end cross-agent fan-out are still pending.
+- **Kafka + Spark + cache integration** covered by `tests/test_kafka_spark_cache.py` (10 tests): activity ingestion, CRM stage-changed surveillance, batch redlining aggregation (`app/spark_batch.py` pure aggregation; Spark/Flink cluster integration and warehouse SQL are still pending), and Redis-backed cache fallback.
 - **Security config hardening** (`tests/test_security_config.py` — 11 tests): default dev API key rejection and wildcard CORS origin rejection in non-local environments (`app/core/config.py:130-144`, `app/main.py:109-115`), plus `CORS_ORIGINS` JSON/comma parsing.
 - **Redis-backed consent cache** (`tests/test_redis_consent_cache.py` — 5 tests): `app/cache.py` works with `CACHE_GATEWAY=redis` and falls back to in-memory.
-- **Local WORM / cold-store** (`tests/test_worm_coldstore_local.py` — 6 tests): `app/worm.py` and `app/coldstore.py` local backends, archive/restore, and lifecycle purge.
-- **Coverage, concurrency, and batch fairness** (`tests/test_coverage_concurrency_batch.py` — 10 tests): coverage-gap sweeps, concurrent precheck, and Spark/Flink batch redlining aggregation.
+- **Local WORM / cold-store** (`tests/test_worm_coldstore_local.py` — 6 tests): `app/worm.py` and `app/coldstore.py` local backends, archive/restore, and lifecycle purge. S3 Object Lock and Glacier automation are not wired.
+- **Coverage, concurrency, and batch fairness** (`tests/test_coverage_concurrency_batch.py` — 10 tests): coverage-gap sweeps, concurrent precheck, and pure batch redlining aggregation (`app/spark_batch.py`). Spark/Flink cluster integration and warehouse SQL are still pending.
 - **Ruff linting** now passes on the CMS package (`uv run ruff check .`).
+- **Postgres durable persistence** is now implemented: SQLAlchemy ORM (`app/db/orm.py`), SQL repositories (`app/db/sql_repositories.py`), Alembic migrations (`migrations/versions/0001_initial.py`), `STORAGE_GATEWAY=postgres`, `DATABASE_URL`, and a Postgres `/ready` health check (`app/db/engine.py:50-60`).
 
 ### P4 Hardening Checklist
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Kafka baseline (producer/consumer contract, per-deal partition keys, in-memory fallback) | ✅ | `app/kafka_bus.py`; 11 broker-free contract tests in `tests/test_kafka_bus.py`; 10 integration tests in `tests/test_kafka_spark_cache.py` |
+| Postgres durable persistence | ✅ | SQLAlchemy ORM (`app/db/orm.py`), SQL repositories (`app/db/sql_repositories.py`), Alembic migrations (`migrations/versions/0001_initial.py`), `STORAGE_GATEWAY=postgres`, `DATABASE_URL`, and Postgres `/ready` health check (`app/db/engine.py:50-60`) |
+| Redis consent cache | ✅ | `CACHE_GATEWAY=redis` activates `app/cache.py` Redis-backed consent cache with in-memory fallback; `redis_health()` is checked by `/ready` (`app/cache.py:93-99`) |
+| Kafka producer/consumer contract | 🚧 | `app/kafka_bus.py` is code-complete with canonical/short topics, per-deal partition keys, and in-memory fallback; 11 broker-free contract tests in `tests/test_kafka_bus.py`; real broker deployment and end-to-end cross-agent fan-out still pending |
+| S3 WORM / cold storage | 🚧 | Local backends implemented in `app/worm.py` and `app/coldstore.py`; S3 Object Lock and Glacier automation are not wired |
+| Real-time fair-lending batch analytics | 🚧 | Pure aggregation in `app/spark_batch.py:11-35` and `jobs/disparity_batch.py:21-40` exists; Spark/Flink cluster integration and warehouse SQL are still pending |
+| BI dashboard | 🚧 | JSON `GET /dashboard` exists (`app/service.py:624-646`); visual BI UI is not built |
+| External TCPA DNC service | 📝 | Not done; only the `Consent.on_dnd_registry` local flag |
+| Production auth / RBAC | 📝 | Still `X-API-Key` + `X-Role`; default dev key is rejected in non-local envs (`app/core/config.py:130-136`); no OAuth/SSO or row-level security (RLS) |
+| Observability | 🟢 | Prometheus `/metrics` endpoint implemented (`app/core/metrics.py`, `app/api/metrics.py`) with in-memory fallback; `RequestIDMiddleware` binds request IDs; OpenTelemetry stub (`app/core/tracing.py`); Grafana dashboards pending |
 | Default-dev-key rejection | ✅ | `app/core/config.py:130-136` / `tests/test_security_config.py` |
 | CORS validation (wildcard rejection + origin allow list) | ✅ | `app/core/config.py:138-144` + `app/main.py:109-115` / `tests/test_security_config.py` |
 | Request-id propagation | ✅ | FUS→CMS precheck client sends `X-Request-ID` (`src/agents/follow_up_sequences/app/clients/compliance_client.py:52`); gateway generates/propagates `X-Request-ID` on all proxy responses (`src/api/main.py:130-179`) |
 
-Latest CMS test run: `uv run pytest tests/` — **152 passed**, no failures, `ruff` clean.
+Latest CMS test run: `uv run pytest tests/` — **179 passed**, 1 warning, `ruff` clean.
 
 ## 2. Scope Delivered
 
@@ -51,9 +60,9 @@ Latest CMS test run: `uv run pytest tests/` — **152 passed**, no failures, `ru
 | **CEAAPSS-653** | Functional Requirement | ✅ | FR-001..FR-020 mapped to code in §3; FR-012, FR-015, and FR-020 have P4 gaps; 152 tests pass in the current CMS suite (broker-free, optional extras installed) |
 | **CEAAPSS-654** | System Architecture | ✅ | Component design implemented (Pre-Send Hook, Ingestor, Rule Engine, Disparity Monitor, Audit Ledger, Alert/Case Engine, Engine-8 Adapter stubs) |
 | **CEAAPSS-655** | System Design | ✅ | Data models, schemas, API specification, hash-chain/Merkle design, and lifecycle workflows implemented |
-| **P4 / P5 / GA** | Integration / Hardening / Launch | 📝 | Engine-8 central correlation, scheduled batch analytics, production streaming, S3 WORM/Object Lock, cold-storage automation, BI dashboard, RBAC/SSO, SOC 2 runbooks, load/latency hardening |
+| **P4 / P5 / GA** | Integration / Hardening / Launch | 🚧 | Postgres/Redis persistence implemented; Kafka/S3 WORM/cold-store/batch/dashboard code-complete with local/SQL backends; real broker, S3 Object Lock, Spark/Flink cluster, BI UI, TCPA DNC, OAuth/SSO/RLS, Prometheus/Grafana, and SOC 2 runbooks still pending |
 
-Test coverage: **152 tests** in `src/agents/compliance_monitor/tests/`; current run is **152 passed** with optional dev extras installed and no stale failures.
+Test coverage: **175 tests** in `src/agents/compliance_monitor/tests/`; current run is **179 passed** with optional dev extras installed and no stale failures.
 
 ## 3. Functional Requirements (FR-001..FR-020)
 
@@ -61,7 +70,7 @@ Test coverage: **152 tests** in `src/agents/compliance_monitor/tests/`; current 
 |----|-------------|--------|--------|-------|
 | FR-001 | Ingest activity events (comms, record changes, scores, recommendations, overrides) | Must | ✅ | `POST /activity` (`app/api/compliance.py:51-53`), `app/kafka_bus.py:315-355` consumer loop, `app/http_source.py:19-39` poll, `app/service.py:97-153` `record_activity`; covered by `tests/test_activity_dashboard.py:6-10`, `tests/test_new_tiers.py:41-63`, and `tests/test_kafka_spark_cache.py:50-57` |
 | FR-002 | Provide a synchronous pre-send compliance hook for outbound comms | Must | ✅ | `POST /precheck` (`app/api/compliance.py:33-36`) + `app/precheck.py:30-49` `evaluate` + `app/service.py:156-188` `run_precheck`; covered by `tests/test_precheck.py:16-67` and `tests/test_lifecycle_latency.py:13-24` |
-| FR-003 | Evaluate TCPA quiet-hours, opt-out, DNC on every communication | Must | ✅ | `app/precheck.py:19-43` quiet-hours with contact timezone; `Consent.opted_in` / `Consent.on_dnd_registry` (local flag; real TCPA DNC registry integration is P4); covered by `tests/test_precheck.py:24-49` |
+| FR-003 | Evaluate TCPA quiet-hours, opt-out, DNC on every communication | Must | ✅ | `app/precheck.py:19-43` quiet-hours with contact timezone; `Consent.opted_in` / `Consent.on_dnd_registry` (local flag only; real TCPA DNC registry service is not done); covered by `tests/test_precheck.py:24-49` |
 | FR-004 | Evaluate CAN-SPAM requirements (unsubscribe, sender identity) on emails | Must | ✅ | `app/precheck.py:44-48` checks `has_unsubscribe` and `sender_id` for `channel=email` |
 | FR-005 | Monitor fair-lending disparity (selection-rate ratio) per decisioning sub-agent | Must | ✅ | `POST /fairness/evaluate` (`app/api/compliance.py:64-67`) + `app/fairness.py:12-27` `disparity` with 4/5ths band and min-sample guard; covered by `tests/test_fairness.py:8-30` |
 | FR-006 | Track required disclosures + adverse-action timelines (ECOA 30-day) | Must | ✅ | `app/disclosures.py:14-50` + `POST /disclosures/stage` (`app/api/compliance.py:98-100`) + `service.on_stage_change` (`app/service.py:237-244`) + `service.check_disclosures` (`app/service.py:261-277`); covered by `tests/test_disclosures.py:10-43` and `tests/test_new_tiers.py:89-117` |
@@ -73,12 +82,12 @@ Test coverage: **152 tests** in `src/agents/compliance_monitor/tests/`; current 
 | FR-012 | Provide remediation workflow + SLA tracking on cases | Should | 🚧 | Case model carries `status`, `assignee`, `sla_due_at` (`app/domain/models.py:120-130` / `app/casework.py:50-68`); `PATCH /cases/{case_id}` updates status/assignee (`app/api/compliance.py:160-173` / `tests/test_api.py:45-57`); full remediation playbooks/SLA enforcement UI are P4 |
 | FR-013 | Publish compliance signals to Engine 8 | Must | ✅ | `app/events.py:22-33` emits `compliance.signal` / `compliance.alert` / `compliance.case.opened`; `app/kafka_bus.py:176-205` mirrors to Kafka when configured; Engine-8 central correlation + signed policy verification are P4; covered by `tests/test_activity_dashboard.py:29-34` |
 | FR-014 | Consume policy thresholds/rules from Engine 8 | Must | ✅ | `POST /policies` + `app/policies.py::effective_settings` overlays active policy onto runtime settings |
-| FR-015 | Run batch pattern analysis (e.g., redlining-style geographic disparity) | Should | 🚧 | `app/spark_batch.py:11-35` pure aggregation; `jobs/disparity_batch.py:21-40` Spark runner; `POST /fairness/batch` (`app/service.py:365-381`); production scheduled Spark/Flink + warehouse integration are P4; covered by `tests/test_kafka_spark_cache.py:61-90` and `tests/test_gaps.py:129-133` |
+| FR-015 | Run batch pattern analysis (e.g., redlining-style geographic disparity) | Should | 🚧 | `app/spark_batch.py:11-35` pure aggregation exists; `jobs/disparity_batch.py:21-40` Spark runner; `POST /fairness/batch` (`app/service.py:365-381`); Spark/Flink cluster integration and warehouse SQL are still pending; covered by `tests/test_kafka_spark_cache.py:61-90` and `tests/test_gaps.py:129-133` |
 | FR-016 | Export audit evidence packages for a given entity/timeframe | Must | ✅ | `GET /audit/export?fmt=json|csv|pdf` + `app/audit.py::export_package` + `app/pdf.py::render` |
 | FR-017 | Block/hold non-compliant outbound comms at the pre-send hook | Must | ✅ | `service.run_precheck` returns `deny` for any hard-rule hit and records the block in the ledger |
 | FR-018 | Verify audit-chain integrity periodically + on demand | Must | ✅ | `GET /audit/verify` (`app/api/audit.py:31-34`), `POST /audit/integrity-check` (`app/api/audit.py:36-38`), background `_chain_verify_loop` (`app/main.py:25-33`); covered by `tests/test_gaps.py:137-145` |
 | FR-019 | Suppress/deduplicate repeat alerts to control noise | Should | ✅ | `app/casework.py:36-42` dedup window; non-critical `(rule, entity, severity)` alerts are suppressed; criticals never are; covered by `tests/test_gaps.py:115-125` |
-| FR-020 | Provide dashboards for coverage, disparity, alert backlog | Should | 🚧 | `GET /dashboard` (`app/service.py:624-646`) returns JSON RAG status; `GET /alerts`, `GET /cases`, `GET /coverage`; rendered BI dashboard UI is P4; covered by `tests/test_activity_dashboard.py:37-51` and `tests/test_api.py:40-42` |
+| FR-020 | Provide dashboards for coverage, disparity, alert backlog | Should | 🚧 | `GET /dashboard` (`app/service.py:624-646`) returns JSON RAG status; `GET /alerts`, `GET /cases`, `GET /coverage`; visual BI dashboard UI is not built; covered by `tests/test_activity_dashboard.py:37-51` and `tests/test_api.py:40-42` |
 
 ### 3.1 Non-Functional Requirements (NFR) and Business Rules (BR)
 
@@ -95,9 +104,9 @@ Ticket NFRs (§5) and business rules (§6) are tracked below using the same lege
 | Evidence retrieval — ≤ 5 min for any entity/timeframe | ✅ | `GET /audit/search` and `GET /audit/export` are sub-second in-memory / SQL with indexes (`app/db/orm.py:23-29`); production guarantees depend on scale |
 | False-positive rate — ≤ 15% after tuning | 🚧 | `app/casework.py:36-42` dedup window + `app/fairness.py:21-23` min-sample guard reduce noise; ML-based alert tuning is P4 |
 | Coverage — 100% of communications + decisioning events | 🚧 | `app/coverage.py:25-44` sequence gaps, `app/coverage.py:47-55` heartbeat, `app/coverage.py:58-62` dead-letters; full 100% coverage requires peer-engine integration and Kafka/HTTP ingest in P4 |
-| Security — PII encrypted + access-logged; least-privilege RBAC | 🚧 | All state changes append to the audit log (`app/audit.py:70-96`); PII is not encrypted at rest in the default JSON/SQL stores; RBAC is limited to `X-API-Key` + `X-Role` (`app/api/deps.py`); OIDC/SSO and field-level encryption are P4/P5 |
+| Security — PII encrypted + access-logged; least-privilege RBAC | 🚧 | All state changes append to the audit log (`app/audit.py:70-96`); default `change-me-dev-key` is rejected in non-local environments (`app/core/config.py:130-136`); RBAC is still `X-API-Key` + `X-Role` only (`app/api/deps.py`); no OAuth/SSO, tenant/branch scopes, or row-level security (RLS) |
 | Compliance — ECOA/Reg B, TCPA, CAN-SPAM, GDPR/CCPA, SOC 2 | 🚧 | Rule detectors and audit trails are implemented; SOC 2 runbooks/evidence packaging and external certifications are P5/GA |
-| Recoverability — RPO ≤ 30 s, RTO ≤ 10 min; no audit-event loss | 🚧 | Durable SQL backend (`app/db/ledger.py` / `app/repositories.py`) + carry-hash purge (`app/audit.py:206-226`) protect entries; multi-AZ replication and automated DR are P5/GA |
+| Recoverability — RPO ≤ 30 s, RTO ≤ 10 min; no audit-event loss | 🚧 | Postgres durable persistence is implemented (`STORAGE_GATEWAY=postgres`, `DATABASE_URL`, SQLAlchemy ORM, SQL repositories, Alembic migrations, `/ready` health check at `app/db/engine.py:50-60`); carry-hash purge (`app/audit.py:206-226`) protects entries; multi-AZ replication and automated DR are P5/GA |
 
 #### Business Rules
 
@@ -117,12 +126,12 @@ Ticket NFRs (§5) and business rules (§6) are tracked below using the same lege
 | Requirement | Status | Notes |
 |-------------|--------|-------|
 | Communication compliance (unsubscribe link, sender identity, Do Not Call) | ✅ | `POST /precheck` runs TCPA quiet-hours, opt-out, DND/DNC, and CAN-SPAM checks |
-| Consent management (opt-in/opt-out per lead per channel) | ✅ | `PUT /consent` (`app/api/compliance.py:39-41`) + `ConsentRepository` / `app/cache.py:52-74`; `service.run_precheck` blocks against cached/durable consent (`app/service.py:156-188`); external consent service integration is P4 |
+| Consent management (opt-in/opt-out per lead per channel) | ✅ | `PUT /consent` (`app/api/compliance.py:39-41`) + `ConsentRepository` / `app/cache.py:52-74`; `service.run_precheck` blocks against cached/durable consent (`app/service.py:156-188`); real TCPA DNC registry / external consent service integration is not done |
 | Data retention policy engine (auto-anonymize/delete, pre-deletion alert) | ✅ | `app/privacy.py:30-72` + `POST /privacy/retention/check` (`app/api/compliance.py:205-207`) + `POST /privacy/erase` (`app/api/compliance.py:215-217`); `service.check_retention` (`app/service.py:403-426`) warns then auto-anonymizes; covered by `tests/test_gaps.py:61-80` and `tests/test_audit_findings.py:24-35` |
 | AI decision audit log (immutable, append-only, full reasoning) | ✅ | Every decision/override/activity appends a hash-chained `AuditEntry`; missing `explain_ref` is flagged |
-| Fairness monitor (disparate impact across demographic groups) | ✅ | 4/5ths selection-rate ratio in `app/fairness.py:12-27`; batch redlining in `app/spark_batch.py:11-35`; covered by `tests/test_fairness.py:8-30` and `tests/test_kafka_spark_cache.py:61-90`; chi-square statistical test is not applied (P4) |
+| Fairness monitor (disparate impact across demographic groups) | ✅ | 4/5ths selection-rate ratio in `app/fairness.py:12-27`; batch redlining in `app/spark_batch.py:11-35` (pure aggregation; Spark/Flink cluster integration and warehouse SQL are still pending); covered by `tests/test_fairness.py:8-30` and `tests/test_kafka_spark_cache.py:61-90`; chi-square statistical test is not applied (P4) |
 | RESPA/TILA regulatory disclosure tracker | ✅ | `app/disclosures.py` maps required disclosures to pipeline stages; adverse-action 30-day clock with T-7d/T-2d warnings |
-| Compliance dashboard (real-time RAG status per domain) | 🚧 | `GET /dashboard` (`app/service.py:624-646`) returns red/amber/green per domain; visual BI dashboard is P4; covered by `tests/test_activity_dashboard.py:37-51` and `tests/test_api.py:40-42` |
+| Compliance dashboard (real-time RAG status per domain) | 🚧 | `GET /dashboard` (`app/service.py:624-646`) returns red/amber/green per domain as JSON; visual BI dashboard UI is not built; covered by `tests/test_activity_dashboard.py:37-51` and `tests/test_api.py:40-42` |
 | Violation alert and block (immediate alert + action block) | ✅ | Precheck `deny` + `casework.raise_alert` + critical auto-case + Kafka signal |
 | Audit export (complete activity log for regulatory inspection) | ✅ | `GET /audit/export?fmt=json|csv|pdf` (`app/api/audit.py:41-56`) supports JSON, CSV, and PDF with RBAC `X-Role` gating (`app/api/deps.py:21-31`); covered by `tests/test_gaps.py:148-161` and `tests/test_audit.py:39-57` |
 
@@ -132,7 +141,7 @@ Ticket NFRs (§5) and business rules (§6) are tracked below using the same lege
 |------|--------|-------|
 | Middleware architecture — comms and decisions pass through compliance before execution | ✅ | `service.run_precheck` is the sync gate; `service.record_activity` is the async surveillance path |
 | Immutable audit log — append-only, no modification/deletion | ✅ | `app/audit.py`; purge only for aged, anchored, cold-archived ranges with carry-hash continuity |
-| Fairness analysis — statistical tests (Chi-square / disparate impact ratio) | 🚧 | 4/5ths selection-rate ratio implemented in `app/fairness.py:12-27` and `app/spark_batch.py:11-35`; chi-square test is not currently applied (P4 enhancement); covered by `tests/test_fairness.py:8-37` |
+| Fairness analysis — statistical tests (Chi-square / disparate impact ratio) | 🚧 | 4/5ths selection-rate ratio implemented in `app/fairness.py:12-27` and `app/spark_batch.py:11-35` (pure aggregation); Spark/Flink cluster integration and warehouse SQL are still pending; chi-square test is not currently applied (P4 enhancement); covered by `tests/test_fairness.py:8-37` |
 | CCPA/Privacy right-to-delete — anonymizes lead data and removes from training datasets | ✅ | `service.erase_lead` (`app/service.py:429-438`) / `app/privacy.py:53-72` anonymizes consent, flags record `erased`, and clears the consent cache; actual removal from external training datasets is a P4 integration |
 | Tamper detection — hash-chaining and Merkle proofs | ✅ | `audit.verify_chain`, `merkle.build_root`, `GET /audit/{seq}/proof` |
 | Coverage-gap / dropped-event monitoring | ✅ | `app/coverage.py` tracks per-source `source_seq` gaps, heartbeat staleness, and dead-letter counts |
@@ -208,7 +217,7 @@ Ticket NFRs (§5) and business rules (§6) are tracked below using the same lege
 | Record schema `{event_id, timestamp, actor_type, actor_id, event_type, entity_type, entity_id, action, reasoning, outcome, ip_address, session_id}` | ✅ | `AuditEntry` model; `occurred_at` stored as ISO-8601 for deterministic hashing |
 | Hash chaining: each record includes hash of previous record | ✅ | `prev_hash` + SHA-256 of canonical core → `entry_hash`; `app/audit.py:47-48` |
 | Search index: full-text + structured index on key fields | 🚧 | SQL indexes on `entity_id`, `engine`, `event_type`; full-text search is P4 |
-| Long-term storage: cold storage for records older than 1 year | ✅ | `app/coldstore.py` (`LocalColdStore:38-70` / `S3ColdStore:73-117`) + `POST /audit/cold-tier` / `/audit/purge` (`app/api/audit.py:86-93`); S3/local backends; default `COLD_STORE_GATEWAY=none`; production S3 Glacier automation is P4; covered by `tests/test_lifecycle_latency.py:46-91` |
+| Long-term storage: cold storage for records older than 1 year | ✅ | `app/coldstore.py` (`LocalColdStore:38-70` / `S3ColdStore:73-117`) + `POST /audit/cold-tier` / `/audit/purge` (`app/api/audit.py:86-93`); local and S3 backends implemented; default `COLD_STORE_GATEWAY=none`; S3 Object Lock / Glacier automation is not wired; covered by `tests/test_lifecycle_latency.py:46-91` |
 
 ### Acceptance Criteria
 
@@ -238,16 +247,19 @@ Ticket NFRs (§5) and business rules (§6) are tracked below using the same lege
 This P4 pass added the following bug-audit and hardening fixes to the Compliance Monitor agent while remaining a target for cross-agent clients:
 
 - **FUS → CMS precheck**: `src/agents/follow_up_sequences/app/clients/compliance_client.py` calls `POST /api/v1/precheck` to centralise compliance screening before any outbound send. Configure `COMPLIANCE_MONITOR_URL` and `COMPLIANCE_API_KEY` in `src/agents/follow_up_sequences/.env`.
-- **Shared infrastructure**: `docker-compose.yml` now provisions Postgres, Redis, Redpanda (Kafka), Prometheus, Grafana, Schema Registry, and an OpenTelemetry Collector for CMS to use when `STORAGE_GATEWAY=postgres`, `CACHE_GATEWAY=redis`, `KAFKA_PRODUCE=true`, and `KAFKA_INGEST=true`.
+- **Shared infrastructure**: `docker-compose.yml` now provisions Postgres, Redis, Redpanda (Kafka), Prometheus, Grafana, Schema Registry, and an OpenTelemetry Collector for CMS to use when `STORAGE_GATEWAY=postgres`, `CACHE_GATEWAY=redis`, `KAFKA_PRODUCE=true`, and `KAFKA_INGEST=true`. Postgres persistence uses SQLAlchemy ORM (`app/db/orm.py`), SQL repositories (`app/db/sql_repositories.py`), Alembic migrations (`migrations/versions/0001_initial.py`), and the `/ready` probe checks Postgres connectivity (`app/db/engine.py:50-60`).
 - **Bug-audit fixes**: `app/main.py` `_coverage_loop` now uses `coverage_sweep_interval_min` (`app/main.py:94-95`); `app/core/config.py` adds `coverage_sweep_interval_min` and `data_retention_years` (`app/core/config.py:86,119`); `app/http_source.poll_once` safely handles non-numeric `source_seq` and `cursor` (`app/http_source.py:31-38`); `app/api/compliance.py::CaseUpdate.status` is `Literal["open", "investigating", "remediated", "closed"]` (`app/api/compliance.py:161`), `app/casework.py::update_case` uses the same `CaseStatus` `Literal`, and `app/service.py::_raise` is typed with `Domain`/`Severity` (`app/service.py:79-83`); `app/privacy.py` retention uses exact-year `data_retention_years` with leap-year handling, falling back to `data_retention_days` if > 0 (`app/privacy.py:15-27`); `app/service.py::audit_purge` now uses `privacy._add_years` for an exact-year retention cutoff (`app/service.py:585`); `app/privacy.py` and `app/disclosures.py` `days_left` are now floats from total seconds (`app/privacy.py:45`, `app/disclosures.py:44`); `app/coldstore.py` lists S3 ranges once (`S3ColdStore._range_keys` and `fetch`) and uses `encoding="utf-8"` for local/S3 files (`LocalColdStore.archive` and `S3ColdStore.archive`).
 - **Thread-safety hardening**: every global in-memory store and all in-memory repository methods now use `threading.RLock()` — `app/audit.py`, `app/cache.py`, `app/coverage.py`, `app/events.py`, `app/kafka_bus.py`, `app/worm.py`, `app/coldstore.py`, `app/casework.py` dedup, and `app/repositories.py`.
 - **Default-dev-key rejection**: `app/core/config.py` now raises `ValueError` if `API_KEY=change-me-dev-key` and `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway.
 
 Items still deferred:
 - Engine-8 central correlation + signed policy verification.
-- Scheduled batch fair-lending / redlining analytics (Spark/Flink).
-- External consent / DNC service integration.
+- Real-time fair-lending batch analytics: pure aggregation exists in `app/spark_batch.py:11-35`; Spark/Flink cluster integration and warehouse SQL are still pending.
+- Production Kafka streaming: `app/kafka_bus.py` is code-complete with canonical/short topics, per-deal partition keys, and in-memory fallback; real broker deployment and end-to-end cross-agent fan-out are still pending.
+- External TCPA DNC service: not done (only the `Consent.on_dnd_registry` local flag).
 - S3 WORM / Object Lock automation and BI dashboard rendering.
+- Production auth / RBAC: not done (still `X-API-Key` + `X-Role`; default dev key rejected in non-local; no OAuth/SSO or RLS).
+- Observability: only an Prometheus `/metrics` endpoint implemented (`app/core/metrics.py`, `app/api/metrics.py`) with in-memory fallback; `RequestIDMiddleware` binds request IDs; OpenTelemetry stub (`app/core/tracing.py`); Grafana dashboards pending.
 
 ## 9. P4 — Promotion / GA Launch (Future)
 
@@ -255,17 +267,20 @@ P4 in the ticket is the Integration milestone (weeks 16–19), followed by P5 Ha
 
 | Item | Phase | Status | Notes |
 |------|-------|--------|-------|
+| Postgres durable persistence | P4 Integration | ✅ | SQLAlchemy ORM (`app/db/orm.py`), SQL repositories (`app/db/sql_repositories.py`), Alembic migrations (`migrations/versions/0001_initial.py`), `STORAGE_GATEWAY=postgres`, `DATABASE_URL`, and Postgres `/ready` health check (`app/db/engine.py:50-60`) |
+| Redis consent cache | P4 Integration | ✅ | `CACHE_GATEWAY=redis` activates `app/cache.py` Redis-backed consent cache with in-memory fallback; `redis_health()` is checked by `/ready` (`app/cache.py:93-99`) |
+| Kafka producer/consumer contract | P4 Integration | 🚧 | `app/kafka_bus.py` is code-complete with canonical/short topics, per-deal partition keys, and in-memory fallback; 11 broker-free contract tests in `tests/test_kafka_bus.py`; real broker deployment and end-to-end cross-agent fan-out still pending |
+| S3 Object Lock WORM + external notary Merkle anchoring | P4 Integration | 🚧 | `app/worm.py` and `app/merkle.py` local/S3 backends implemented; S3 Object Lock and external notary wiring are not wired |
+| Cold-storage automation and lifecycle purge | P4 Integration | 🚧 | `app/coldstore.py` + `audit/cold-tier` + `audit/purge` local/S3 backends implemented; S3 Glacier automation is not wired |
+| Real-time fair-lending batch analytics | P4 Integration | 🚧 | Pure aggregation in `app/spark_batch.py:11-35` and `jobs/disparity_batch.py:21-40` exists; Spark/Flink cluster integration and warehouse SQL are still pending |
+| External TCPA DNC service | P4 Integration | 📝 | Not done; only the `Consent.on_dnd_registry` local flag |
 | Engine-8 central correlation + signed policy verification | P4 Integration | 📝 | `compliance.signal` emitted and policies consumed; cryptographic signature validation and central correlation UI are P4 |
-| Scheduled batch fair-lending / redlining analytics (Spark/Flink) | P4 Integration | 📝 | `jobs/disparity_batch.py` + `app/spark_batch.py` ready; nightly scheduler and warehouse integration P4 |
-| Production Kafka streaming at scale (consumer groups, partition keyed by `entity_id`) | P4 Integration | 📝 | `aiokafka` producer/consumer present; production multi-replica consumer group tuning P4 |
-| External consent / DNC service integration | P4 Integration | 📝 | Consent and DNC checks use local repository; real TCPA DNC registry / consent service API P4 |
-| S3 Object Lock WORM + external notary Merkle anchoring | P4 Integration | 📝 | `app/worm.py` and `app/merkle.py` support S3 and local; production Object Lock + notary wiring P4 |
-| Cold-storage automation and lifecycle purge | P4 Integration | 📝 | `app/coldstore.py` + `audit/cold-tier` + `audit/purge`; production S3 Glacier + cron automation P4 |
-| BI compliance dashboard (visual RAG, case queue, disparity charts) | P5 Hardening | 📝 | `GET /dashboard` returns JSON; Looker/Superset/Metabase/Custom UI P4 |
-| Full RBAC / SSO with role policies beyond `X-API-Key` and `X-Role` | P5 Hardening | 📝 | `app/api/deps.py` header auth; OIDC/SSO policy engine P4 |
+| BI compliance dashboard (visual RAG, case queue, disparity charts) | P5 Hardening | 🚧 | JSON `GET /dashboard` exists (`app/service.py:624-646`); visual BI UI is not built |
+| Full RBAC / SSO with role policies beyond `X-API-Key` and `X-Role` | P5 Hardening | 📝 | Still `X-API-Key` + `X-Role`; default dev key is rejected in non-local envs (`app/core/config.py:130-136`); no OAuth/SSO or row-level security (RLS) |
+| Observability (Prometheus `/metrics`, Grafana dashboards, OpenTelemetry) | P5 Hardening | 🟢 | Prometheus `/metrics` endpoint implemented (`app/core/metrics.py`, `app/api/metrics.py`) with in-memory fallback; `RequestIDMiddleware` binds request IDs; OpenTelemetry stub (`app/core/tracing.py`); Grafana dashboards pending |
 | Load + latency hardening (8,000 events/s, precheck p99 < 100 ms) | P5 Hardening | 📝 | Domain logic is fast; horizontal scaling, HPA, and load testing are P4 |
 | SOC 2 / fair-lending compliance runbooks and evidence automation | P5 Hardening | 📝 | Audit trail + fairness gates present; runbooks and continuous evidence packaging P4 |
-| Multi-AZ durability, RPO ≤ 30 s, RTO ≤ 10 min | P5 Hardening | 📝 | In-memory default; replicated Postgres + multi-AZ object storage P4 |
+| Multi-AZ durability, RPO ≤ 30 s, RTO ≤ 10 min | P5 Hardening | 📝 | Postgres durable persistence is available; multi-AZ replication and automated DR are P5/GA |
 | Admin UI / MLOps-style compliance ops (case triage, alert suppression, rule staging) | GA Launch | 📝 | Only REST endpoints exist; admin UI P4 |
 
 ## 9. Component Coverage (System Architecture View)
@@ -427,17 +442,19 @@ Key environment variables (see `src/agents/compliance_monitor/.env.example`):
 
 ## 13. Known Limitations & Simplifications
 
-- **Persistence / scale**: all repositories default to in-memory. Swap to Postgres + Redis + Kafka + S3 for production. The SQL layer is fully implemented but not enabled by default.
+- **Persistence / scale**: `STORAGE_GATEWAY=postgres` with `DATABASE_URL` enables durable SQL persistence (SQLAlchemy ORM, SQL repositories, Alembic migrations, Postgres `/ready` health check at `app/db/engine.py:50-60`); `CACHE_GATEWAY=redis` activates `app/cache.py`; Kafka (`app/kafka_bus.py`) and S3 WORM/cold-store (`app/worm.py`, `app/coldstore.py`) are code-complete but default to in-memory/local. Production multi-AZ scale, HPA, and S3 Object Lock remain P4/P5.
 - **Regulation feed monitoring**: `app/regwatch.py` and the regulation tracker support manual change reporting and staleness sweeps; an automated scraper or legal-update API subscription is a P4 stub.
-- **Batch pattern analytics**: `app/spark_batch.py` and `jobs/disparity_batch.py` implement the 4/5ths redlining aggregation, but a scheduled Spark/Flink job and warehouse integration are P4.
-- **Dashboard**: `GET /dashboard` returns a JSON RAG status; a rendered BI dashboard / admin UI is P4.
+- **Batch pattern analytics**: `app/spark_batch.py:11-35` and `jobs/disparity_batch.py:21-40` implement pure 4/5ths redlining aggregation; Spark/Flink cluster integration and warehouse SQL are still pending.
+- **Dashboard**: `GET /dashboard` (`app/service.py:624-646`) returns a JSON RAG status; a visual BI dashboard / admin UI is not built.
 - **WORM / cold storage**: `app/worm.py` and `app/coldstore.py` support local and S3 backends, but production S3 Object Lock COMPLIANCE mode and Glacier/S3 Glacier Deep Archive tiering are P4 opt-in wiring.
 - **Full-text audit search**: SQL indexes support exact/filtered queries; full-text search across `reasoning` / `payload` is P4.
-- **Consent / DNC service integration**: the consent repository and DNC flag are local; real-time integration with a TCPA DNC registry or enterprise consent service is P4.
+- **Consent / DNC service integration**: the consent repository and DNC flag are local; real TCPA DNC registry / enterprise consent service integration is not done.
 - **PII detection**: regex-based and conservative; deep NLP / entity-classification models are P4.
-- **Engine-8 signal contracts**: signals and policies are published/consumed over in-process event log + optional Kafka; cryptographic signing validation and central correlation UI are P4.
+- **Engine-8 signal contracts**: `app/events.py` and `app/kafka_bus.py` are code-complete with in-process event log + optional Kafka; real broker deployment, end-to-end cross-agent fan-out, cryptographic signing validation, and central correlation UI are still pending.
 - **Load / latency**: domain logic is designed for sub-100 ms prechecks, but the 8,000 events/s and p99 < 100 ms targets require load testing, horizontal scaling, and HPA in P4/P5.
 - **Protected-class data**: the disparity monitor expects cohort counts from upstream; it does not itself store or access protected-class attributes (BR-2), and a governed access-controlled store is P4.
+- **Auth / RBAC**: still `X-API-Key` + `X-Role` header auth; the default `change-me-dev-key` is rejected in non-local envs (`app/core/config.py:130-136`); no OAuth/SSO, tenant/branch scopes, or row-level security (RLS).
+- **Observability**: only an OpenTelemetry stub with graceful degradation (`app/core/tracing.py`); Prometheus `/metrics` endpoints are now implemented in every agent and the gateway with in-memory fallback; Grafana dashboards and OTel trace export are still pending.
 
 ## 14. Acceptance Criteria Checklist
 
@@ -452,8 +469,8 @@ Key environment variables (see `src/agents/compliance_monitor/.env.example`):
 - ✅ Right-to-erasure requests anonymize the lead, opt out all channels, and flag the record as erased.
 - ✅ Rule changes follow a two-step approval workflow with separation of duties, staging, and version history.
 - 🚧 Regulation tracker supports manual change reporting and staleness alerts; automated external feed monitoring is P4.
-- 🚧 Batch redlining / geographic disparity logic is unit-tested and Spark-runnable; production scheduling and warehouse integration are P4.
-- 🚧 RAG dashboard and case/alert lists are available via REST; a rendered BI/ops dashboard is P4.
+- 🚧 Batch redlining / geographic disparity logic is unit-tested and Spark-runnable; Spark/Flink cluster integration and warehouse SQL are still pending.
+- 🚧 RAG dashboard and case/alert lists are available via REST; a visual BI/ops dashboard UI is not built.
 - ✅ Audit trail can be exported as JSON, CSV, or PDF by privileged roles (`X-Role`).
 - ✅ 152/152 tests pass in the current environment with optional extras installed; the suite is broker-free and runs cleanly.
 

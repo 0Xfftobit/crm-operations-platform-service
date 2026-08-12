@@ -28,7 +28,7 @@ This document tracks what has been implemented against the PAS ticket (`docs/tic
 | **CEAAPSS-648** | Functional Requirement | ✅ | FR-001 through FR-016 implemented (FR-015 via `/explore` API; self-serve UI P4); FR-018 implemented via `app/messaging/kafka_bus.py`; FR-017 reserved for P4 |
 | **CEAAPSS-649** | System Architecture | ✅ | Component design implemented (Collector, Semantic Layer, Dashboard Builder, Attribution Engine, Reconciliation, Anomaly Detector, Report Scheduler) |
 | **CEAAPSS-650** | System Design | ✅ | Data models (`app/domain/models.py`), period/bucket parsing (`app/period_utils.py`), schemas, API spec, and metric-computation designs implemented |
-| **P4** | Promotion / GA Launch | 🚧 | Kafka producer/consumer baseline, default-dev-key/CORS hardening, feedback client fan-out, and focused P4 test modules are in; BI rendering, production DW/persistence, scheduled email delivery, and full SSO/RLS remain P4 |
+| **P4** | Promotion / GA Launch | 🚧 | Kafka producer/consumer contract for `crm.outreach.*` and `crm.outcome.*`, default-dev-key/CORS hardening, FLS outcome fan-out, CSV/PDF export (local), and focused P4 test modules are in; BI dashboard rendering, live DW/S3 integration (`DW_*` not wired), real broker/DW/Flink/Spark streaming, full SSO/RLS, scheduled email delivery, forecast-attainment, self-serve exploration UI, right-to-erasure/pseudonymization audit, and observability (Prometheus/OTel) remain P4/GA |
 
 ## 3. Functional Requirements (FR-001..FR-018)
 
@@ -47,11 +47,11 @@ This document tracks what has been implemented against the PAS ticket (`docs/tic
 | FR-011 | Provide KPI API for programmatic metric retrieval | Must | ✅ | `GET /api/v1/kpi/{metric_name}` with dims/filters/period |
 | FR-012 | Reconcile financial metrics to source-of-truth + alert on drift | Must | ✅ | `POST /api/v1/reconcile/{period}`, `POST /api/v1/ingest/finance-source` |
 | FR-013 | Support cohort analysis | Should | ✅ | `GET /api/v1/cohorts?dim=...` |
-| FR-014 | Schedule reports + threshold alerts | Should | ✅ | `POST /api/v1/reports/schedule` + `GET /api/v1/reports/{id}/run` + `POST /api/v1/threshold-alert/{metric}`; scheduled email/cron delivery P4. Covered by `tests/test_performance_analytics.py::TestReports` and `::TestAlerts` |
-| FR-015 | Provide self-serve exploration with governed fields | Should | ✅ | `GET /api/v1/explore` returns metrics, dimensions, period formats |
+| FR-014 | Schedule reports + threshold alerts | Should | ✅ | `POST /api/v1/reports/schedule` + `GET /api/v1/reports/{id}/run` + `POST /api/v1/threshold-alert/{metric}`; scheduled email/cron delivery not done (`ReportSchedule` entity exists, no mechanism). Covered by `tests/test_performance_analytics.py::TestReports` and `::TestAlerts` |
+| FR-015 | Provide self-serve exploration with governed fields | Should | ✅ | `GET /api/v1/explore` returns metrics, dimensions, period formats; self-serve UI not built (P4) |
 | FR-016 | Expose metric lineage + definition history | Must | ✅ | `GET /api/v1/metrics/definitions/{name}/history`, `GET /api/v1/metrics/definitions/{name}/lineage`; `MetricDefinition` carries `lineage` and `depends_on` |
-| FR-017 | Compute forecast-attainment vs Forecasting Engine targets | Should | 📝 | P4: depends on Forecasting Engine integration |
-| FR-018 | Provide near-real-time streaming KPIs for ops dashboards | Should | ✅ | `app/messaging/kafka_bus.py` producer/consumer contract with in-memory fallback; real broker optional. Covered by `tests/test_kafka_bus.py` |
+| FR-017 | Compute forecast-attainment vs Forecasting Engine targets | Should | 📝 | Not done; depends on Forecasting Engine integration |
+| FR-018 | Provide near-real-time streaming KPIs for ops dashboards | Should | ✅ | `app/messaging/kafka_bus.py` producer/consumer contract with in-memory fallback for `crm.outreach.*` and `crm.outcome.*`; real broker, DW, and Flink/Spark streaming pipeline pending. Covered by `tests/test_kafka_bus.py` |
 
 ## 3.1 Business Rules (BR-001..BR-007)
 
@@ -62,7 +62,7 @@ This document tracks what has been implemented against the PAS ticket (`docs/tic
 | BR-003 | Attribution windows are configurable (default 90-day lookback for funded loans) | ✅ | `app/core/config.py::attribution_lookback_d` (default 90), used in `app/attribution.py::_touch_path` |
 | BR-004 | Scorecards must include guardrail metrics (quality/compliance), not just volume | ✅ | `app/dashboard_builder.py::build_rep_scorecards` returns `guardrail_compliance` (1 - opt-outs/delivered) and `opt_out_rate` per rep |
 | BR-005 | Row-level security restricts data to the viewer's team/role/tenant | 🚧 | `app/api/deps.py::parse_role_headers` + `_rls_filter` in `app/api/analytics.py` apply tenant/team/rep filters; full SSO/policy engine is P4. Covered by `tests/test_performance_analytics.py::TestRLS` |
-| BR-006 | Analytics layer stores pseudonymized IDs; raw PII excluded | 🚧 | `TouchEvent`/`OutcomeEvent` use `contact_pid` and have no raw-PII fields; validation/erasure audit is P4 (BR-6) |
+| BR-006 | Analytics layer stores pseudonymized IDs; raw PII excluded | 🚧 | `TouchEvent`/`OutcomeEvent` use `contact_pid` and have no raw-PII fields; right-to-erasure / pseudonymization audit not done (BR-6) |
 | BR-007 | Late-arriving outcomes trigger recomputation of affected attribution/cohorts | 📝 | Attribution and cohorts are only recomputed on request; no automatic backfill for late-arriving outcomes (P4) |
 
 ## 3.2 Non-Functional Requirements (NFR-01..NFR-11)
@@ -70,11 +70,11 @@ This document tracks what has been implemented against the PAS ticket (`docs/tic
 | ID | Category | Requirement | Target | Status | Notes |
 |----|----------|-------------|--------|--------|-------|
 | NFR-01 | Latency | Dashboard query (pre-aggregated, p95) | ≤ 2 s | 📝 | In-memory, on-demand computation; no pre-aggregated marts or p95 load tests (P4) |
-| NFR-02 | Freshness | Streaming metric freshness | ≤ 5 min | ✅ | `app/messaging/kafka_bus.py` producer/consumer with in-memory fallback; real broker optional. Covered by `tests/test_kafka_bus.py` |
-| NFR-03 | Freshness | Batch/warehouse model refresh | ≤ 1 h | 📝 | In-memory repositories; no warehouse/dbt refresh pipeline (P4) |
+| NFR-02 | Freshness | Streaming metric freshness | ≤ 5 min | ✅ | `app/messaging/kafka_bus.py` producer/consumer contract with in-memory fallback for `crm.outreach.*` and `crm.outcome.*`; real broker, DW, and Flink/Spark streaming pipeline pending. Covered by `tests/test_kafka_bus.py` |
+| NFR-03 | Freshness | Batch/warehouse model refresh | ≤ 1 h | 🚧 | Postgres SQL persistence implemented (`STORAGE_GATEWAY=postgres`, SQLAlchemy ORM + Alembic); `DW_*` not wired; warehouse/dbt refresh pipeline P4 |
 | NFR-04 | Accuracy | Reconciliation vs funded-loan source-of-truth | ≥ 99.5% | 🚧 | `reconciliation.reconcile_period` uses `RECON_TOLERANCE=0.005`; on-demand, not continuously enforced against live SoT (P4) |
 | NFR-05 | Governance | Published KPIs with versioned definitions | 100% | ✅ | `app/semantic.py` versions every metric; `GET /api/v1/metrics/definitions/{name}/history`. Covered by `tests/test_performance_analytics.py::TestSemantic` |
-| NFR-06 | Availability | Dashboard + KPI API uptime | ≥ 99.9% | 📝 | No SLO monitoring or production uptime stack (P4/ops) |
+| NFR-06 | Availability | Dashboard + KPI API uptime | ≥ 99.9% | 📝 | No Prometheus `/metrics` endpoint, no OpenTelemetry instrumentation, and no SLO monitoring or production uptime stack (P4/ops) |
 | NFR-07 | Scalability | Warehouse concurrency | ≥ 200 concurrent queries | 📝 | In-memory; no warehouse or load/concurrency tests (P4) |
 | NFR-08 | Security | Row-level security by team/role/tenant | Enforced | 🚧 | Header-driven filters only; full policy/SSO enforcement P4 (see BR-005) |
 | NFR-09 | Auditability | Metric lineage + definition history | Full lineage | ✅ | `GET /api/v1/metrics/definitions/{name}/history` and `/lineage`; `MetricDefinition.depends_on` and `lineage` fields. Covered by `tests/test_performance_analytics.py::TestSemantic` |
@@ -91,21 +91,21 @@ This document tracks what has been implemented against the PAS ticket (`docs/tic
 | Pipeline KPIs | ✅ | `GET /api/v1/funnel` + velocity/cycle time |
 | Revenue KPIs | ✅ | `funded_amount`, `deal_count`, `roi_per_campaign`, attributed revenue |
 | Communication KPIs | ✅ | `open_rate`, `reply_rate`, `engagement_rate`, `opt_out_rate` |
-| Role-based access | 🚧 | `parse_role_headers` + `_rls_filter` apply tenant/team/rep filters across dashboards; full policy/SSO engine P4. See `tests/test_performance_analytics.py::TestRLS` |
+| Role-based access | 🚧 | Header-driven filters only (`parse_role_headers` + `_rls_filter`); full policy/SSO engine P4. See `tests/test_performance_analytics.py::TestRLS` |
 | Date range filters | ✅ | Daily/weekly/monthly/quarterly/yearly/custom period expressions |
 | Agent leaderboard | ✅ | `GET /api/v1/leaderboard?metric=...` |
 | Pipeline funnel | ✅ | `GET /api/v1/funnel` |
-| CSV + PDF export | ✅ | `GET /api/v1/export/{metric}` and `GET /api/v1/reports/{id}/run` use `app/pdf.py`/`app/service.py::export_metric`; covered by `tests/test_performance_analytics.py::TestReports` |
-| Automated reports | 🚧 | `ReportSchedule` entity + `GET /api/v1/reports/{id}/run`; no cron or email delivery (P4). Tested in `tests/test_performance_analytics.py::TestReports` |
+| CSV + PDF export | ✅ | `GET /api/v1/export/{metric}` and `GET /api/v1/reports/{id}/run` use `app/pdf.py` locally; DW/S3 export P4. Covered by `tests/test_performance_analytics.py::TestReports` |
+| Automated reports | 🚧 | Not done; `ReportSchedule` entity + `GET /api/v1/reports/{id}/run` exist; no cron or email delivery (P4). Tested in `tests/test_performance_analytics.py::TestReports` |
 
 ### Technical Notes
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Separate analytics DB | 🚧 | `app/repositories.py` in-memory (`STORAGE_BACKEND=memory`); DW/Postgres/S3 persistence adapters P4 |
+| Separate analytics DB | 🚧 | Postgres SQL persistence implemented (`STORAGE_GATEWAY=postgres`, SQLAlchemy ORM + Alembic); `DW_*` and `S3_EXPORT_*` not wired; DW/S3 export P4 |
 | Pre-computed KPIs refreshed every 15 min | 📝 | `app/dashboard_builder.py`/`app/attribution.py` compute on demand; materialized marts + refresh cron P4 |
-| Server-side PDF reports | ✅ | `app/pdf.py` builds valid PDFs from metric/funnel/channel data |
-| Email on schedule | 📝 | P4: delivery mechanism not built |
+| Server-side PDF reports | ✅ | `app/pdf.py` builds valid PDFs from metric/funnel/channel data; local files only; DW/S3 export P4 |
+| Email on schedule | 📝 | Not done; `ReportSchedule` entity exists; no cron or email mechanism |
 
 ### Acceptance Criteria
 
@@ -115,10 +115,10 @@ This document tracks what has been implemented against the PAS ticket (`docs/tic
 | Manager dashboard shows individual + team-wide performance | ✅ | Scorecards + leaderboard + team filters |
 | Pipeline funnel shows conversion rates and drop-off per stage | ✅ | `GET /api/v1/funnel` |
 | Charts support date range filtering | ✅ | `period` parameter across dashboards and KPIs |
-| Self-serve exploration of governed metrics | ✅ | `GET /api/v1/explore` (FR-015) |
+| Self-serve exploration of governed metrics | ✅ | `GET /api/v1/explore` returns governed fields (FR-015); self-serve UI not built (P4) |
 | Metric lineage and definition history | ✅ | `GET /api/v1/metrics/definitions/{name}/history` and `/lineage` (FR-016) |
-| Reports export correctly as CSV and PDF | ✅ | `GET /api/v1/export/{metric}` and `GET /api/v1/reports/{id}/run` produce CSV/PDF; covered by `tests/test_performance_analytics.py::TestReports` |
-| Automated weekly reports emailed to managers | 📝 | Schedule entity exists; email delivery P4 |
+| Reports export correctly as CSV and PDF | ✅ | `GET /api/v1/export/{metric}` and `GET /api/v1/reports/{id}/run` produce CSV/PDF (local `app/pdf.py`); DW/S3 export P4. Covered by `tests/test_performance_analytics.py::TestReports` |
+| Automated weekly reports emailed to managers | 📝 | Not done; `ReportSchedule` entity exists; email delivery P4 |
 
 ## 5. CEAAPSS-562 — ROI Attribution
 
@@ -201,9 +201,9 @@ This document tracks what has been implemented against the PAS ticket (`docs/tic
 
 ### Latest P4 pass (2026-08-10)
 
-This pass implemented the Kafka producer/consumer contract, security and RLS hardening, and split the test suite into focused modules; the full suite is now `91/91` tests passing and P0–P3 behavior remains intact:
+This pass implemented the Kafka producer/consumer contract, security and RLS hardening, and split the test suite into focused modules; the full suite is now `120/120` tests passing and P0–P3 behavior remains intact:
 
-- **Kafka producer/consumer contract** (`app/messaging/kafka_bus.py`): public contract `start_producer` / `stop_producer` / `produce` / `produce_sync` / `consume_loop` / `start_consumer` / `stop_consumer` / `reset_kafka_bus` / `bus_stats` / `canonical_topic` / `partition_key`; publishes `TouchEvent`s to `crm.outreach.*` and `OutcomeEvent`s to `crm.outcome.*` with per-deal partition keys and degrades to an in-memory bus when Kafka is disabled or unavailable. Covered by `tests/test_kafka_bus.py` (14 tests).
+- **Kafka producer/consumer contract** (`app/messaging/kafka_bus.py`): public contract `start_producer` / `stop_producer` / `produce` / `produce_sync` / `consume_loop` / `start_consumer` / `stop_consumer` / `reset_kafka_bus` / `bus_stats` / `canonical_topic` / `partition_key`; publishes `TouchEvent`s to `crm.outreach.*` and `OutcomeEvent`s to `crm.outcome.*` with per-deal partition keys and degrades to an in-memory bus when Kafka is disabled or unavailable. Real broker, DW, and Flink/Spark streaming pipeline remain P4. Covered by `tests/test_kafka_bus.py` (14 tests).
 - **Security, CORS validation, and RLS header filtering**: `app/core/config.py` rejects `API_KEY=change-me-dev-key` and wildcard `CORS_ORIGINS` in non-local environments, `app/main.py` applies `CORSMiddleware`, and `app/api/deps.py::parse_role_headers` plus `app/api/analytics.py::_rls_filter` enforce tenant/team/rep filters. Covered by `tests/test_security_and_rls.py` (10 tests).
 - **Advanced attribution, anomaly, and reconciliation coverage**: `tests/test_attribution_advanced.py` (6 tests) and `tests/test_anomaly_and_reconciliation.py` (8 tests).
 - **Feedback client and report/exports**: `app/clients/feedback_client.py` cross-agent fan-out plus scheduled report/export edge cases. Covered by `tests/test_feedback_client_and_reports.py` (11 tests).
@@ -223,8 +223,10 @@ This pass added the following production hardening pieces without breaking P0–
 8. **Bug-audit tests**: `tests/test_bug_audit.py` adds 7 regression tests covering ISO-8601 reconciliation windows, `_in_period` ISO support, time-decay conversion reference, attribution repository tuple keys, and concurrent repository safety.
 
 Items still deferred:
-- Production Postgres / DW / S3 persistence.
-- Materialized KPI refresh, full SSO/RLS, BI dashboard rendering, scheduled email delivery, self-serve exploration UI.
+- Postgres SQL persistence implemented (`STORAGE_GATEWAY=postgres`, SQLAlchemy ORM + Alembic). Live DW/S3 integration still pending.
+- Real broker, DW, and Flink/Spark streaming pipeline for Kafka.
+- Full SSO/RLS, BI dashboard rendering, scheduled email delivery (no cron/email mechanism), forecast-attainment, self-serve exploration UI, right-to-erasure/pseudonymization audit, and observability (Prometheus `/metrics` and OpenTelemetry).
+- Materialized KPI refresh.
 
 ## 9. P4 — Promotion / GA Launch (Future)
 
@@ -232,20 +234,21 @@ P4 in the ticket is the Promotion milestone. Items below are tracked for P4 deli
 
 | Item | P4 Phase | Status | Notes |
 |------|----------|--------|-------|
-| Real-time streaming marts (Flink/Kafka) | Promotion | ✅ | `app/messaging/kafka_bus.py` producer/consumer contract, per-deal partition keys, canonical topic mapping, in-memory fallback; real broker optional. Covered by `tests/test_kafka_bus.py` (14 tests) |
+| Real-time streaming marts (Flink/Kafka) | Promotion | 🚧 | Kafka producer/consumer contract code-complete in `app/messaging/kafka_bus.py` for `crm.outreach.*` and `crm.outcome.*`; per-deal partition keys and canonical topic mapping; real broker, DW, and Flink/Spark streaming pipeline pending. Covered by `tests/test_kafka_bus.py` (14 tests) |
 | Default-dev-key rejection | Promotion | ✅ | `app/core/config.py` raises `ValueError` when `API_KEY=change-me-dev-key` in non-local envs. Covered by `tests/test_security_and_rls.py` |
 | CORS validation | Promotion | ✅ | `app/core/config.py` rejects wildcard `CORS_ORIGINS` in non-local envs; `app/main.py` applies `CORSMiddleware`. Covered by `tests/test_security_and_rls.py` |
-| Cross-agent feedback client fan-out | Promotion | ✅ | `app/clients/feedback_client.py` forwards `loan.funded` / `deal.lost` to FLS `POST /api/v1/outcomes` with `X-API-Key` and `X-Request-ID`. Covered by `tests/test_cross_agent.py` and `tests/test_feedback_client_and_reports.py` |
-| Production persistence (Postgres/S3/DW) | Promotion | 📝 | In-memory repositories; persistence adapters P4 |
+| Cross-agent FLS outcome fan-out | Promotion | ✅ | `app/clients/feedback_client.py` forwards `loan.funded` / `deal.lost` to FLS `POST /api/v1/outcomes` with `X-API-Key` and `X-Request-ID`. Covered by `tests/test_cross_agent.py` and `tests/test_feedback_client_and_reports.py` |
+| Production persistence (Postgres/S3/DW) | Promotion | 🚧 | Postgres SQL persistence implemented (`STORAGE_GATEWAY=postgres`, SQLAlchemy ORM + Alembic); `DW_*` and `S3_EXPORT_*` not wired; DW/S3 export P4 |
 | Pre-computed / materialized KPI refresh | Promotion | 📝 | Computed on demand; dbt/materialized cron P4 |
-| Full row-level security with SSO/policies | Promotion | 📝 | Header filters only; policy engine P4 |
-| BI dashboard rendering | GA Launch | 📝 | REST/JSON only; Looker/Superset/Metabase P4 |
-| Scheduled email delivery | GA Launch | 📝 | `ReportSchedule` entity + run endpoint; email channel P4 |
-| Self-serve exploration UI | GA Launch | 📝 | FR-015; not built |
+| Full row-level security with SSO/policies | Promotion | 🚧 | Not done; header-driven filters only; full SSO/RLS policy engine P4 |
+| BI dashboard rendering | GA Launch | 📝 | JSON `GET /dashboard` exists; Looker/Superset/Metabase visual UI P4 |
+| Scheduled email delivery | GA Launch | 🚧 | Not done; `ReportSchedule` entity + run endpoint exist; no cron or email mechanism |
+| Self-serve exploration UI | GA Launch | 📝 | Not done; FR-015; `/explore` API exists, self-serve UI not built |
 | Metric lineage graph | GA Launch | 📝 | FR-016; versioned definitions only |
-| Forecast-attainment integration | GA Launch | 📝 | FR-017; depends on Forecasting Engine |
-| Near-real-time streaming KPIs | GA Launch | ✅ | FR-018; `app/messaging/kafka_bus.py` producer/consumer contract with in-memory fallback. Covered by `tests/test_kafka_bus.py` |
-| Right-to-erasure / pseudonymization audit | GA Launch | 📝 | BR-6; `contact_pid` used but no erasure/pseudonymization audit yet |
+| Forecast-attainment integration | GA Launch | 📝 | Not done; FR-017; depends on Forecasting Engine integration |
+| Near-real-time streaming KPIs | GA Launch | 🚧 | FR-018; `app/messaging/kafka_bus.py` producer/consumer contract with in-memory fallback for `crm.outreach.*` and `crm.outcome.*`; real broker, DW, and Flink/Spark streaming pipeline pending. Covered by `tests/test_kafka_bus.py` |
+| Right-to-erasure / pseudonymization audit | GA Launch | 📝 | Not done; BR-6; `contact_pid` used but no erasure/pseudonymization audit yet |
+| Observability (Prometheus / OpenTelemetry) | Promotion | 🟢 | Prometheus `/api/v1/metrics` implemented with in-memory fallback (`app/core/metrics.py`); `RequestIDMiddleware` binds request IDs; OpenTelemetry still pending |
 
 ## 9. Component Coverage (System Architecture View)
 
@@ -258,8 +261,8 @@ P4 in the ticket is the Promotion milestone. Items below are tracked for P4 deli
 | Channel Effectiveness | ✅ | `app/dashboard_builder.py` channel functions (CEAAPSS-563) |
 | Reconciliation | ✅ | `app/reconciliation.py` (FR-012/BR-2) |
 | Anomaly / Alert Detector | ✅ | `app/anomaly_detector.py` implements z-score anomaly detection and threshold alerts; threshold alerts, scheduled reports, and `detect_anomalies` are exercised by `tests/test_anomaly_and_reconciliation.py` (8 tests) |
-| Kafka Bus | ✅ | `app/messaging/kafka_bus.py` producer/consumer contract with per-deal partition keys, canonical topic mapping, and in-memory fallback; real broker optional. Covered by `tests/test_kafka_bus.py` (14 tests) |
-| Report Exporter | ✅ | `app/pdf.py` + `app/service.py` export/run (FR-014) |
+| Kafka Bus | ✅ | `app/messaging/kafka_bus.py` producer/consumer contract for `crm.outreach.*` and `crm.outcome.*` with per-deal partition keys, canonical topic mapping, and in-memory fallback; real broker, DW, and Flink/Spark streaming pipeline pending. Covered by `tests/test_kafka_bus.py` (14 tests) |
+| Report Exporter | ✅ | `app/pdf.py` + `app/service.py` export/run (FR-014); local files only; DW/S3 export P4 |
 | RLS Filter | ✅ | `app/api/deps.py::parse_role_headers` + `app/api/analytics.py::_rls_filter` apply tenant/team/rep filters and override query params; full policy/SSO engine remains P4. Covered by `tests/test_security_and_rls.py` (10 tests) |
 
 ## 10. File Map
@@ -339,8 +342,11 @@ Key environment variables (see `src/agents/performance_analytics/.env.example`):
 | `API_KEY` | `change-me-dev-key` | X-API-Key header for write/ops endpoints |
 | `LOG_LEVEL` | `INFO` | structlog level |
 | `LOG_JSON` | `false` | JSON vs console logs |
-| `STORAGE_BACKEND` | `memory` | `memory` only; Postgres/S3/DW persistence adapters P4 |
-| `DATA_DIR` | `./data/performance_analytics` | Where `disk` snapshots would write (disk backend P4) |
+| `STORAGE_BACKEND` | `memory` | `memory` (default) or `disk`; `STORAGE_GATEWAY=postgres` + `DATABASE_URL` for durable SQL persistence |
+| `STORAGE_GATEWAY` | `memory` | `memory` (default) or `postgres` (requires `DATABASE_URL`) |
+|| `DATABASE_URL` | (empty) | PostgreSQL+psycopg URL when `STORAGE_GATEWAY=postgres` |
+|| `DB_AUTO_CREATE` | `false` | Create tables on startup (dev only; prod uses `alembic upgrade head`) |
+|| `DATA_DIR` | `./data/performance_analytics` | Where `disk` snapshots would write |
 | `ATTRIBUTION_LOOKBACK_D` | `90` | Attribution window |
 | `ATTRIBUTION_DEFAULT_MODEL` | `time_decay` | Default credit model |
 | `TIME_DECAY_HALFLIFE_D` | `14` | Time-decay half-life |
@@ -350,10 +356,11 @@ Key environment variables (see `src/agents/performance_analytics/.env.example`):
 
 ## 13. Known Limitations & Simplifications
 
-- **Persistence**: all repositories are in-memory. Swap to Postgres/S3/DW for production.
+- **Persistence**: `STORAGE_GATEWAY=postgres` SQLAlchemy ORM, SQL repositories, and Alembic migrations are now implemented; default is `memory`. Swap to `STORAGE_GATEWAY=postgres` + `DATABASE_URL` and run `alembic upgrade head` for production. DW/S3 export still pending.
 - **Attribution Markov/Shapley**: simplified model using empirical channel conversion rates; full path-level Markov chain and exact Shapley for large sets is P4.
 - **Anomaly detection**: uses z-score over historical monthly metric values; production will likely require seasonal decomposition and control charts.
-- **RLS**: filters are derived from `X-*` headers and applied as query filters; a real policy engine/SSO is P4.
-- **Scheduled reports**: `ReportSchedule` is stored and runnable on demand; cron/email delivery is P4.
-- **PDF rendering**: a minimal stdlib PDF generator is included; production can switch to a dedicated PDF library.
-- **Streaming**: `app/messaging/kafka_bus.py` implements an async Kafka producer/consumer contract with in-memory fallback and per-deal partition keys; a real Kafka/Flink broker and end-to-end streaming marts remain P4.
+- **RLS**: header-driven filters only; a full policy engine/SSO is not done (P4).
+- **Scheduled reports**: `ReportSchedule` entity exists and is runnable on demand; cron/email delivery is not done (P4).
+- **PDF rendering**: `app/pdf.py` is a minimal stdlib generator (local files only); production can switch to a dedicated PDF library or DW/S3 export.
+- **Streaming**: `app/messaging/kafka_bus.py` implements an async Kafka producer/consumer contract for `crm.outreach.*` and `crm.outcome.*` with in-memory fallback and per-deal partition keys; a real broker, DW, and Flink/Spark streaming pipeline remain P4.
+- **Observability**: Prometheus `/api/v1/metrics` endpoint implemented (`app/core/metrics.py`, `app/api/health.py`) with in-memory fallback; `RequestIDMiddleware` in `app/core/middleware.py` binds request IDs; OpenTelemetry instrumentation still pending.

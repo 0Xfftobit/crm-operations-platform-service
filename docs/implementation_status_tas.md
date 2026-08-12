@@ -26,11 +26,11 @@ This document tracks what has been implemented against the TAS ticket (`docs/tic
 | **CEAAPSS-708** | Functional Requirement | ✅ | FR-001 through FR-020 mapped to `build_functional_requirements_status` and tests |
 | **CEAAPSS-709** | System Architecture | ✅ | Component design implemented (`app/pipeline.py`, `app/api/architecture.py`) |
 | **CEAAPSS-710** | System Design | ✅ | Data models, schemas, API specification, workflow state machine, and sequence designs implemented |
-| **P4** | Promotion / GA Launch | 🚧 | Kafka producer/consumer contract, per-deal partition keys, in-memory fallback, LLM client, FUS fan-out, and default-dev-key/CORS hardening are code-complete; real Temporal cluster, full production CRM/calendar/feature-store OAuth integration, load testing to 15k/s, and SOC 2 runbooks remain P4 |
+| **P4** | Promotion / GA Launch | 🚧 | Kafka producer/consumer contract, per-deal partition keys, in-memory fallback, LLM client, FUS fan-out, HTTP fallback CRM/calendar clients, Postgres durable persistence, and default-dev-key/CORS hardening are code-complete; real Temporal cluster, S3 exports, OAuth/SSO for CRM/calendar/feature-store, load testing to 15k/s, DLQ replay UI, shadow/canary dashboards, and SOC 2 runbooks remain P4 |
 
 ## 2.1 Latest P4 Hardening Pass (2026-08-10)
 
-This pass completes the code-level production hardening below and leaves the full TAS test suite at **129 passed, 1 skipped** (one Postgres persistence test skipped).
+This pass completes the code-level production hardening below and leaves the full TAS test suite at **135 passed, 1 skipped** (one Postgres persistence test skipped).
 
 - **Kafka producer/consumer contract**: `app/messaging/kafka_bus.py` implements canonical/short topic mapping, per-deal `partition_key`, optional real Kafka producer/consumer, and an in-process bus fallback; covered by `tests/test_kafka_contract.py` (7 tests).
 - **Security hardening**: `app/core/config.py` rejects the default `change-me-dev-key` API key and wildcard `*` CORS origins in non-local/non-test environments; covered by `tests/test_config_security.py` (4 tests).
@@ -41,14 +41,14 @@ This pass completes the code-level production hardening below and leaves the ful
 
 | ID | Requirement | MoSCoW | Status | Notes |
 |----|-------------|--------|--------|-------|
-| FR-001 | Ingest domain events from Kafka and map to candidate rule sets | Must | 🚧 | HTTP is the default path (`POST /api/v1/events/ingest`); real `app/kafka_consumer_group.py` with `KAFKA_CONSUMER_ENABLED=false` by default; `app/messaging/kafka_bus.py` has per-deal partition keys; covered by `test_kafka_consume_stub` and `test_kafka_fanout_on_task_create` |
+| FR-001 | Ingest domain events from Kafka and map to candidate rule sets | Must | 🚧 | Kafka producer/consumer contract is code-complete (`app/messaging/kafka_bus.py`, `app/kafka_consumer_group.py`) with per-deal partition keys and in-memory fallback; HTTP is the default path (`POST /api/v1/events/ingest`) and `KAFKA_CONSUMER_ENABLED=false` by default; real broker and cross-agent fan-out are pending; covered by `test_kafka_consume_stub` and `test_kafka_fanout_on_task_create` |
 | FR-002 | Evaluate rule conditions using JSONLogic-style DSL over event + features | Must | ✅ | `app/engine/jsonlogic.py` (JSONLogic), `app/engine/cel_eval.py` (CEL subset), `app/engine/rule_engine.py::rule_conditions_match` |
 | FR-003 | Resolve rule conflicts by priority, specificity, deterministic tiebreak | Must | ✅ | `app/engine/conflict_resolver.py::resolve_action_conflicts` + `sort_rules_for_evaluation` |
 | FR-004 | Execute `create_task` with template, assignee, due date, SLA | Must | ✅ | `app/engine/action_executor.py` lines 217–267, `app/store.py::create_crm_task` |
 | FR-005 | Execute `update_record` (stage, owner, flags) via CRM service API | Must | 🚧 | `app/integrations/crm.py::apply_record_updates` and `assign_owner`/`post_note` call `CRM_SERVICE_URL` with `X-API-Key` when configured and fall back to a synthetic record; executed through `app/integrations/activity_runner.py`; covered by `test_pre_approval_compound_automation` |
 | FR-006 | Execute `request_document` emitting `document.requested` | Must | ✅ | `app/engine/action_executor.py` lines 306–334, `app/integrations/documents.py::resolve_document_types`, `app/workflows/doc_request_chain.py` |
 | FR-007 | Guarantee idempotent effects via `(trigger_id, rule_id, action_key)` | Must | ✅ | `app/idempotency.py` + `app/ledger.py`; keys built in `action_executor.py` lines 212, 269 |
-| FR-008 | Start durable Temporal workflows for multi-step automations | Must | 🚧 | `app/workflows/doc_request_temporal.py` (worker `scripts/temporal_worker.py`), `app/workflows/generic_temporal.py`, `app/workflows/workflow_client.py`; `app/integrations/activity_runner.py` routes activities to Temporal when `TEMPORAL_ENABLED=true`; local fallback orchestration in `app/workflows/doc_request_chain.py`; covered by `test_doc_request_workflow` |
+| FR-008 | Start durable Temporal workflows for multi-step automations | Must | 🚧 | Real Temporal cluster deployment not done; Temporal client/worker code exists in `app/workflows/doc_request_temporal.py` (worker `scripts/temporal_worker.py`), `app/workflows/generic_temporal.py`, and `app/workflows/workflow_client.py`; `app/integrations/activity_runner.py` routes activities to Temporal when `TEMPORAL_ENABLED=true`; local fallback orchestration in `app/workflows/doc_request_chain.py`; covered by `test_doc_request_workflow` |
 | FR-009 | Apply escalation timers and reassign/notify on SLA breach | Must | ✅ | `app/escalation.py`, `app/service.py::process_escalations` lines 619–654, scheduler tick |
 | FR-010 | Provide dry-run/simulation returning action set without side effects | Must | ✅ | `app/service.py::simulate_rule`, `simulate_rule_design`, `simulate_blast_radius`; `POST /automation/v1/rules/{id}/simulate` and `/rules/{id}/blast-radius` |
 | FR-011 | Write immutable ledger entry per action with provenance | Must | ✅ | `app/ledger.py::append_ledger_entry`; called from `app/service.py::_persist_and_emit` lines 97–257 |
@@ -60,7 +60,7 @@ This pass completes the code-level production hardening below and leaves the ful
 | FR-017 | Version rules with canary (1%) and instant rollback | Must | ✅ | `app/store.py`, `app/service.py::publish_rule_version` / `rollback_rule`; canary via deterministic hash in `app/guards.py` |
 | FR-018 | Expose REST API to trigger, simulate, query runs | Must | ✅ | `app/api/automation.py` (`/automation/v1/triggers`, `/rules/{id}/simulate`, `/runs/{run_id}`), `app/api/events.py`, `app/api/rules.py` |
 | FR-019 | Emit `task.completed` / `automation.failed` events | Should | ✅ | `app/messaging/kafka_bus.py` topics; `app/events.py` publishes `task.completed`, `automation.run.completed`, `automation.failed` |
-| FR-020 | Allow per-tenant/branch rule scoping and feature-flagged enablement | Could | 🚧 | `tenant_id`, `branch_id`, `feature_flag` fields in `app/schemas/rules.py`; RBAC roles/scopes enforced via `app/rbac.py` and `X-Role` header on sensitive endpoints; full tenant SSO/branch policy enforcement is P4 |
+| FR-020 | Allow per-tenant/branch rule scoping and feature-flagged enablement | Could | 🚧 | `tenant_id`, `branch_id`, `feature_flag` fields in `app/schemas/rules.py`; RBAC role/scope helpers in `app/rbac.py` and `X-Role` header enforcement on sensitive endpoints exist; full tenant/branch SSO and policy enforcement not done |
 
 ## 4. Main TAS Ticket Requirement Coverage
 
@@ -77,7 +77,7 @@ This pass completes the code-level production hardening below and leaves the ful
 | Recurring task support | ✅ | `recurring` + `recurrence_interval_hours` on rules; `spawn_recurring_tasks` in scheduler |
 | Task completion logging with outcome notes | ✅ | `POST /api/v1/tasks/{id}/complete`, `app/store.py::complete_task` |
 | Conflict detection (duplicate same-type task in window) | ✅ | `app/conflicts.py::has_recent_duplicate` + `DUPLICATE_TASK_WINDOW_HOURS` |
-| Calendar API integration for meeting tasks | 🚧 | `app/integrations/calendar.py::create_calendar_event` calls `CALENDAR_SERVICE_URL` with `X-API-Key` when configured and falls back to a synthetic stub; `app/integrations/activities/connectors.py` wraps it as a Temporal activity; covered by `test_meeting_task_gets_calendar_stub` |
+| Calendar API integration for meeting tasks | ✅ | `app/integrations/calendar.py::create_calendar_event` calls `CALENDAR_SERVICE_URL` with `X-API-Key` when configured and falls back to a synthetic stub; `app/integrations/activities/connectors.py` wraps it as a Temporal activity; Google/Outlook/Exchange OAuth P4; covered by `test_meeting_task_gets_calendar_stub` |
 
 ### Technical Notes
 
@@ -86,7 +86,7 @@ This pass completes the code-level production hardening below and leaves the ful
 | Rule storage `{trigger_event, conditions[], action_type, delay_hours, assignee, priority}` | ✅ | `WorkflowRuleCreate` in `app/schemas/rules.py`; stored in `app/store.py` |
 | Cron/scheduler for time-based task generation | ✅ | `app/scheduler.py` + `app/cron_triggers.py` |
 | Conflict detection (duplicate same type within short window) | ✅ | `app/conflicts.py` + `action_executor.py` lines 219–220 |
-| Integrate with calendar APIs | 🚧 | `app/integrations/calendar.py::create_calendar_event` calls `CALENDAR_SERVICE_URL` with `X-API-Key` when configured, otherwise a synthetic stub; `create_calendar_event_activity` registered in `app/integrations/activities/connectors.py`; Google/Outlook/Exchange OAuth P4 |
+| Integrate with calendar APIs | ✅ | `app/integrations/calendar.py::create_calendar_event` calls `CALENDAR_SERVICE_URL` with `X-API-Key` when configured, otherwise a synthetic stub; `create_calendar_event_activity` registered in `app/integrations/activities/connectors.py`; Google/Outlook/Exchange OAuth P4 |
 
 ### Acceptance Criteria
 
@@ -139,14 +139,14 @@ This P4 pass also wired real HTTP clients for CRM, calendar, and feature-store i
 9. **Default-dev-key rejection**: `app/core/config.py` now raises `ValueError` if `API_KEY=change-me-dev-key` and `ENV` is not `local`/`dev`/`development`/`test`, matching the gateway.
 10. **Docker-compose cross-agent wiring**: `docker-compose.yml` sets `FOLLOW_UP_SEQUENCES_URL=http://follow_up_sequences:8000` and `FUS_FANOUT_ENABLED=true` for TAS by default.
 11. **Cross-agent client tests**: `tests/test_cross_agent.py` mocks `httpx.Client` and verifies TAS→FUS `stage_changed` and `lead_scored` fan-out call the right endpoints with `X-API-Key` and `X-Request-ID`.
-12. **Bug-audit tests**: `tests/test_bug_audit.py` adds 6 regression tests covering `trigger_id` stringification/assertion, duplicate-event dedupe concurrency, rule and run creation concurrency, and doc-request `verified=False` default. The full TAS pytest suite is now `129 passed, 1 skipped`.
+12. **Bug-audit tests**: `tests/test_bug_audit.py` adds 6 regression tests covering `trigger_id` stringification/assertion, duplicate-event dedupe concurrency, rule and run creation concurrency, and doc-request `verified=False` default. The full TAS pytest suite is now `135 passed, 1 skipped`.
 13. **LLM provider client**: `app/integrations/llm_client.py` provides an OpenAI-compatible chat-completions client and is wired into `app/agents/llm_task_agent.py`; falls back to a deterministic template when `LLM_PROVIDER_URL` is unset; `LLM_PROVIDER_URL`, `LLM_API_KEY`, `LLM_MODEL`, and `LLM_TIMEOUT_S` added to `.env.example` and `app/core/config.py`.
 
 Items still deferred:
 - Production OAuth/SSO-enabled CRM/calendar/feature-store endpoints (Google/Outlook, enterprise CRM, Feast/Tecton).
 - Real Temporal cluster deployment and worker pools.
-- Real Kafka cluster with partition-keyed consumer groups (per-deal ordering and consumer group code exist but default to in-process bus).
-- Postgres/S3 persistence at scale, load testing to 15k/s, DLQ replay UI, and full tenant SSO/branch policy enforcement.
+- Real Kafka broker and cross-agent fan-out (per-deal partition-keyed producer/consumer code in `app/messaging/kafka_bus.py` and `app/kafka_consumer_group.py` is complete and defaults to an in-process bus).
+- S3 exports and at-scale load testing to 15k/s, DLQ replay UI, and full tenant SSO/branch policy enforcement. Postgres durable persistence is implemented (`STORAGE_BACKEND=postgres`) with inline schema and Redis idempotency is optional (`IDEMPOTENCY_BACKEND=redis`).
 
 ## 8. P4 — Promotion / GA Launch (Future)
 
@@ -154,39 +154,40 @@ P4 in the ticket is the Hardening milestone (weeks 16–18) followed by GA Launc
 
 | Item | P4 Phase | Status | Notes |
 |------|----------|--------|-------|
-| Kafka producer/consumer contract with per-deal partition-keyed ordering | Hardening | ✅ | `app/messaging/kafka_bus.py` implements canonical/short topic mapping, per-deal `partition_key`, optional real Kafka producer/consumer, and in-process bus fallback; consumer group code in `app/kafka_consumer_group.py`; covered by `tests/test_kafka_contract.py` (7 tests) |
-| Real Temporal cluster deployment and worker pools | Hardening | 📝 | `TEMPORAL_ENABLED=false`; local fallback orchestration only |
-| Production persistence (Postgres + Redis + S3 exports) | Hardening | 📝 | `STORAGE_BACKEND=memory` default; SQLite/Postgres/Redis adapters exist but not load-tested |
-| Production CRM service API integration (no direct DB writes) | Hardening | 🚧 | `app/integrations/crm.py` calls `CRM_SERVICE_URL` with `X-API-Key` when configured and falls back to a stub; `app/integrations/activity_runner.py` routes it as a Temporal activity; production OAuth/SSO P4 |
-| Real calendar API integration (Google/Outlook/Exchange) | Hardening | 🚧 | `app/integrations/calendar.py` calls `CALENDAR_SERVICE_URL` with `X-API-Key` when configured and falls back to a stub; `create_calendar_event_activity` registered in `app/integrations/activities/connectors.py`; production OAuth + real endpoints P4 |
-| Real LLM provider abstraction | Hardening | ✅ | `app/integrations/llm_client.py` is an OpenAI-compatible chat-completions client wired into `app/agents/llm_task_agent.py`; falls back to a deterministic template when `LLM_PROVIDER_URL` is unset; covered by `tests/test_llm_client.py` (16 tests), `test_llm_write_blocked_without_approval`, and `test_us3_llm_approval_feedback`; production model governance still P4 |
+| Kafka producer/consumer contract with per-deal partition-keyed ordering | Hardening | ✅ | `app/messaging/kafka_bus.py` and `app/kafka_consumer_group.py` implement canonical/short topic mapping, per-deal `partition_key`, optional real Kafka producer/consumer, and in-process bus fallback; code-complete and covered by `tests/test_kafka_contract.py` (7 tests); real broker and cross-agent fan-out are pending |
+| Real Temporal cluster deployment and worker pools | Hardening | 📝 | Not done; Temporal client/worker code exists but `TEMPORAL_ENABLED=false` by default; local fallback orchestration only |
+| Production persistence (Postgres + Redis + S3 exports) | Hardening | 🚧 | Postgres implemented (`STORAGE_BACKEND=postgres`) with inline schema; Redis idempotency optional (`IDEMPOTENCY_BACKEND=redis`); S3 exports not done; SQLite/memory remain defaults in tests |
+| Production CRM service API integration (no direct DB writes) | Hardening | ✅ | `app/integrations/crm.py` calls `CRM_SERVICE_URL` with `X-API-Key` when configured and falls back to a stub; `app/integrations/activity_runner.py` routes it as a Temporal activity; production OAuth/SSO P4 |
+| Real calendar API integration (Google/Outlook/Exchange) | Hardening | ✅ | `app/integrations/calendar.py` calls `CALENDAR_SERVICE_URL` with `X-API-Key` when configured and falls back to a stub; `create_calendar_event_activity` registered in `app/integrations/activities/connectors.py`; production OAuth + real endpoints P4 |
+| Real LLM provider abstraction | Hardening | ✅ | `app/integrations/llm_client.py` is an OpenAI-compatible chat-completions client wired into `app/agents/llm_task_agent.py`; falls back to a deterministic template when `LLM_PROVIDER_URL` is unset; covered by `tests/test_llm_client.py` (16 tests), `test_llm_write_blocked_without_approval`, and `test_us3_llm_approval_feedback`; production model governance / provider routing still P4 |
 | Default-dev-key and wildcard CORS rejection | Hardening | ✅ | `app/core/config.py` raises `ValueError` when `API_KEY=change-me-dev-key` or `CORS_ORIGINS` contains `*` in non-local/non-test environments; covered by `tests/test_config_security.py` (4 tests) |
 | Cross-agent FUS fan-out client | Hardening | ✅ | `app/clients/followup_client.py` fans `deal.stage_changed` and `lead.assigned` events to Follow-up Sequences with `X-API-Key` and `X-Request-ID`; covered by `tests/test_integration_guards.py` and `tests/test_cross_agent.py` |
-| Load test to 15k events/s (p95 ≤ 3s) | Hardening | 📝 | `test_load_smoke_burst` is a smoke test only |
-| DLQ replay UI / one-click admin tooling | Hardening | 📝 | Replay API exists; UI is P4 |
-| Shadow/canary analytics dashboards | GA Launch | 📝 | `canary_stats` exposed via API only |
+| Load test to 15k events/s (p95 ≤ 3s) | Hardening | 📝 | Not done; `test_load_smoke_burst` is a smoke test only; target is 15k events/s with p95 ≤ 3s |
+| DLQ replay UI / one-click admin tooling | Hardening | 📝 | Not done; replay API `POST /api/v1/vision/dlq/{id}/replay` exists; admin UI missing |
+| Observability (Prometheus /metrics + OpenTelemetry) | Hardening | 🟢 | Prometheus `/api/v1/metrics` implemented with in-memory fallback (`app/core/metrics.py`); `RequestIDMiddleware` binds request IDs; OpenTelemetry is still a config field |
+| Shadow/canary analytics dashboards | GA Launch | 📝 | Not done; `canary_stats` exposed via API only; visual dashboard P4 |
 | SOC 2 / fair-lending compliance runbooks | GA Launch | 📝 | Guardrails and ledger in place; runbooks/docs P4 |
-| Full tenant SSO/branch policy enforcement | GA Launch | 🚧 | `tenant_id`/`branch_id` fields exist; `app/rbac.py` defines roles/scopes and `X-Role` header enforcement on agent/vision/trigger endpoints; full platform IAM/SSO and branch policy enforcement P4 |
+| Full tenant SSO/branch policy enforcement | GA Launch | 📝 | Not done; `tenant_id`/`branch_id` fields in `app/schemas/rules.py` and RBAC role/scope helpers in `app/rbac.py` exist with `X-Role` header enforcement on agent/vision/trigger endpoints; no OAuth/SSO or full branch policy enforcement |
 
 ## 8. Component Coverage (System Architecture View)
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Trigger Ingestor | 🚧 | `app/messaging/trigger_ingestor.py` + `app/api/events.py`; real Kafka consumer in `app/kafka_consumer_group.py` and per-deal `partition_key` in `app/messaging/kafka_bus.py`; HTTP is the default path; `KAFKA_CONSUMER_ENABLED=false` |
+| Trigger Ingestor | 🚧 | `app/messaging/trigger_ingestor.py` + `app/api/events.py`; Kafka producer/consumer contract is code-complete in `app/messaging/kafka_bus.py` and `app/kafka_consumer_group.py` with per-deal `partition_key` and in-memory fallback; HTTP is the default path; `KAFKA_CONSUMER_ENABLED=false`; real broker and cross-agent fan-out are pending |
 | Enrichment Resolver | 🚧 | `app/integrations/feature_store.py::fetch_features` calls `FEATURE_STORE_URL` with `X-API-Key` when configured and falls back to an in-process catalog; `CRM_SERVICE_URL` and `CALENDAR_SERVICE_URL` HTTP clients are similarly wired with `X-API-Key`; covered by `test_pre_approval_compound_automation` |
 | Rule Engine | ✅ | `app/engine/rule_engine.py`, `app/engine/jsonlogic.py`, `app/engine/cel_eval.py` |
 | Conflict Resolver | ✅ | `app/engine/conflict_resolver.py` |
 | Action Executor | ✅ | `app/engine/action_executor.py` (task, record, doc, note, workflow, emit) |
-| Workflow Orchestrator | 🚧 | `app/workflows/doc_request_chain.py` (local fallback), `doc_request_temporal.py` / `workflow_client.py`, and `app/integrations/activity_runner.py` route to Temporal when `TEMPORAL_ENABLED=true`; worker in `scripts/temporal_worker.py`; covered by `test_doc_request_workflow` |
+| Workflow Orchestrator | 🚧 | Real Temporal cluster deployment not done; Temporal client/worker code exists in `app/workflows/doc_request_chain.py` (local fallback), `doc_request_temporal.py` / `workflow_client.py`, and `app/integrations/activity_runner.py` routes to Temporal when `TEMPORAL_ENABLED=true`; worker in `scripts/temporal_worker.py`; covered by `test_doc_request_workflow` |
 | LLM Task Agent | ✅ | `app/agents/llm_task_agent.py` calls `app/integrations/llm_client.py` when `LLM_PROVIDER_URL` is configured and falls back to deterministic templates; approval gate and forbidden-topic guardrails enforced; covered by `test_llm_write_blocked_without_approval` and `test_us3_llm_approval_feedback` |
-| Idempotency Store | 🚧 | `app/idempotency.py` + `app/persistence/redis_store.py` (memory or Redis backend, `IDEMPOTENCY_BACKEND` selectable); Redis path covered by `test_redis_backend_with_fakeredis` |
+| Idempotency Store | 🚧 | `app/idempotency.py` + `app/persistence/redis_store.py`; Redis idempotency optional (`IDEMPOTENCY_BACKEND=redis`) with memory default; Redis path covered by `test_redis_backend_with_fakeredis` |
 | Action Ledger | ✅ | `app/ledger.py` + `app/persistence/db.py` (in-memory/SQLite/Postgres) |
 | Rule Registry / Versioning | ✅ | `app/store.py` + `app/persistence/db.py::persist_rule` |
 | DLQ Manager | ✅ | `app/dlq.py` + `app/service.py::replay_dlq_entry` |
 | Scheduler | ✅ | `app/scheduler.py` (overdue, recurring, escalations) |
 | Dashboard / Manager View | ✅ | `app/api/dashboard.py` + `app/service.py::agent_queue` / `manager_overview` |
 | Guardrails (loop, canary, protected proxies) | ✅ | `app/guards.py`, `app/enrichment.py::condition_references_protected_proxy` |
-| RBAC / Scope Enforcement | ✅ | `app/rbac.py` defines `Role`, `ROLE_SCOPES`, `Principal`, and `require_scope`; `X-Role` header enforced on agent/vision/trigger endpoints; full platform IAM/SSO integration P4 |
+| RBAC / Scope Enforcement | 🚧 | `app/rbac.py` defines `Role`, `ROLE_SCOPES`, `Principal`, and `require_scope`; `X-Role` header enforced on agent/vision/trigger endpoints; `tenant_id`/`branch_id` fields exist; full tenant/branch SSO and policy enforcement not done |
 
 ## 9. File Map
 
@@ -325,7 +326,7 @@ Key environment variables (see `src/agents/task_automation/.env.example`):
 |----------|---------|---------|
 | `API_KEY` | `change-me-dev-key` | X-API-Key header auth |
 | `LOG_LEVEL` | `INFO` | structlog level |
-| `STORAGE_BACKEND` | `memory` | `memory` / `sqlite` / `postgres` |
+| `STORAGE_BACKEND` | `memory` | `memory` / `sqlite` / `postgres` (Postgres code-complete with inline schema)
 | `DATABASE_URL` | `postgresql://taskauto:taskauto@localhost:5433/task_automation` | Postgres connection |
 | `SCHEDULER_ENABLED` | `true` | Background overdue/recurring/escalation loop |
 | `SCHEDULER_INTERVAL_S` | `60` | Tick interval |
@@ -338,23 +339,24 @@ Key environment variables (see `src/agents/task_automation/.env.example`):
 | `CANARY_DEFAULT_PERCENT` | `1.0` | Initial canary traffic % |
 | `LLM_CONFIDENCE_THRESHOLD` | `0.85` | LLM write-approval threshold |
 | `MANDATORY_DRY_RUN_BEFORE_PUBLISH` | `true` | Block publish until dry-run passed |
-| `IDEMPOTENCY_BACKEND` | `memory` | `memory` or `redis` |
+| `IDEMPOTENCY_BACKEND` | `memory` | `memory` or `redis` (Redis implementation exists, optional) |
 | `IDEMPOTENCY_TTL_DAYS` | `7` | Idempotency key retention |
 | `RETRY_MAX_ATTEMPTS` | `5` | Temporal activity retries |
-| `TEMPORAL_ENABLED` | `false` | Toggle real Temporal client |
+| `TEMPORAL_ENABLED` | `false` | Toggle real Temporal client (worker code exists) |
 | `TEMPORAL_HOST` / `NAMESPACE` | `localhost:7233` / `default` | Temporal connection |
-| `KAFKA_CONSUMER_ENABLED` | `false` | Toggle background Kafka consumer |
+| `KAFKA_CONSUMER_ENABLED` | `false` | Toggle background Kafka consumer (code-complete, in-memory fallback) |
 | `KAFKA_TOPICS` | `deal.stage_changed,lead.assigned,document.received` | Subscribed topics |
 
 ## 12. Known Limitations & Simplifications
 
-- **Persistence**: all repositories default to in-memory. SQLite/Postgres and Redis adapters exist but are not configured by default; they are covered by integration tests only.
-- **Kafka transport**: the `kafka-python` consumer group in `app/kafka_consumer_group.py` is disabled by default; per-deal `partition_key` lives in `app/messaging/kafka_bus.py`; events are ingested via `POST /api/v1/events/ingest` and the in-process bus in dev/tests.
+- **Persistence**: all repositories default to in-memory. Postgres persistence is code-complete (`STORAGE_BACKEND=postgres`) with inline schema; Redis idempotency is optional (`IDEMPOTENCY_BACKEND=redis`); S3 exports are not done. SQLite and in-memory remain the defaults in tests.
+- **Kafka transport**: the Kafka producer/consumer contract in `app/messaging/kafka_bus.py` and `app/kafka_consumer_group.py` is code-complete with per-deal `partition_key` and in-memory fallback; real broker and cross-agent fan-out are pending. Events are ingested via `POST /api/v1/events/ingest` and the in-process bus in dev/tests.
 - **Temporal**: durable workflows are defined but `TEMPORAL_ENABLED=false` by default; the local fallback in `doc_request_chain.py` provides the same state machine without durability across restarts.
-- **CRM / calendar / feature-store integrations**: `app/integrations/crm.py`, `app/integrations/calendar.py`, and `app/integrations/feature_store.py` call their respective service URLs with `X-API-Key` when configured and fall back to synthetic records otherwise; production OAuth/SSO endpoints are P4.
+- **CRM / calendar / feature-store integrations**: `app/integrations/crm.py` and `app/integrations/calendar.py` are code-complete HTTP fallback clients; `app/integrations/feature_store.py` similarly calls `FEATURE_STORE_URL` with `X-API-Key` when configured. All fall back to synthetic records otherwise; production OAuth/SSO endpoints are P4.
 - **LLM agent**: `app/agents/llm_task_agent.py` calls `app/integrations/llm_client.py` (OpenAI-compatible chat endpoint) when `LLM_PROVIDER_URL` is configured and falls back to deterministic templates with forbidden-topic guardrails otherwise; the approval gate is always enforced.
-- **RBAC**: `app/rbac.py` enforces role/scope checks via the `X-Role` header on sensitive endpoints; a full platform IAM/SSO integration is P4.
+- **RBAC**: `app/rbac.py` role/scope helpers and `X-Role` header enforcement exist on sensitive endpoints; `tenant_id`/`branch_id` fields are persisted; full tenant/branch SSO and policy enforcement is not done.
 - **Load/throughput**: the `test_load_smoke_burst` is a coarse smoke test; production load validation to 5,000–15,000 events/s is P4.
+- **Observability**: Prometheus `/api/v1/metrics` endpoint implemented (`app/core/metrics.py`, `app/api/health.py`) with in-memory fallback; `RequestIDMiddleware` binds request IDs to `structlog.contextvars`; OpenTelemetry is still a config field only.
 - **Rule scoping (FR-020)**: `tenant_id`/`branch_id`/`feature_flag` are persisted and filtered; `app/rbac.py` scope checks apply on rule authoring endpoints; full multi-tenant branch policy engine / SSO integration is P4.
 - **Protected-class proxy guard**: `app/enrichment.py::condition_references_protected_proxy` blocks known proxy fields; production governance review pipeline is P4.
 
@@ -385,4 +387,4 @@ Key environment variables (see `src/agents/task_automation/.env.example`):
 - **Feature store**: `app/integrations/feature_store.py` calls `FEATURE_STORE_URL` with `X-API-Key` when configured and merges the response with an in-process catalog otherwise.
 - **Stage Tracking / Lead Assignment**: optional HTTP URLs (`STAGE_TRACKING_URL`, `LEAD_ASSIGNMENT_URL`) and API keys are configured in `.env.example`; events can be mocked via `POST /api/v1/events/ingest` during development.
 - **Temporal**: `temporalio` SDK is installed and workflow/activity definitions are present. Real Temporal connectivity is disabled by default (`TEMPORAL_ENABLED=false`); set `TEMPORAL_ENABLED=true` and start `scripts/temporal_worker.py` to use durable orchestration.
-- **Kafka**: `kafka-python` is installed; `app/kafka_consumer_group.py` implements a real consumer group with `KAFKA_TOPICS` and `KAFKA_CONSUMER_GROUP`. The in-process `kafka_bus.py` is used for event logging in dev/tests. Set `KAFKA_CONSUMER_ENABLED=true` and `KAFKA_BOOTSTRAP_SERVERS` to consume from a real cluster.
+- **Kafka**: `kafka-python` is installed; `app/messaging/kafka_bus.py` and `app/kafka_consumer_group.py` implement the producer/consumer contract with per-deal partition keys and in-memory fallback. Real broker and cross-agent fan-out are pending; set `KAFKA_CONSUMER_ENABLED=true` and `KAFKA_BOOTSTRAP_SERVERS` to consume from a real cluster.
