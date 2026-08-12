@@ -105,7 +105,7 @@ def test_experiment_guardrail_early_stopping_flag(client: TestClient) -> None:
 
 
 def test_experiment_promote_blocked_when_not_significant(client: TestClient) -> None:
-    exp_id = _create_experiment(client)
+    exp_id = _create_experiment(client, p_value_threshold=0.0)
     for i in range(40):
         resp = client.post(f"{BASE}/experiments/{exp_id}/assign", json={"entity_id": f"lead-{i}"}).json()
         variant = resp["variant"]
@@ -141,7 +141,7 @@ def test_experiment_record_result_after_completion_is_rejected(client: TestClien
 
 
 def test_experiment_winner_promotion_tie_and_force(client: TestClient) -> None:
-    exp_id = _create_experiment(client)
+    exp_id = _create_experiment(client, p_value_threshold=0.0)
     for i in range(40):
         resp = client.post(f"{BASE}/experiments/{exp_id}/assign", json={"entity_id": f"lead-{i}"}).json()
         variant = resp["variant"]
