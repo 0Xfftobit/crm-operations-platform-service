@@ -32,9 +32,18 @@ class Settings(BaseSettings):
         alias="CORS_ORIGINS",
     )
 
+    # --- In-process / disk storage (datasets + model artifacts) ---
     storage_backend: str = Field("memory", alias="STORAGE_BACKEND")
     data_dir: str = Field("./data/feedback_loop", alias="DATA_DIR")
     model_snapshot_dir: str = Field("./data/feedback_loop/models", alias="MODEL_SNAPSHOT_DIR")
+
+    # --- Durable SQL backend (Postgres/SQLite) ---
+    # memory (default, in-memory repos) | postgres (durable, needs DATABASE_URL).
+    storage_gateway: str = Field("memory", alias="STORAGE_GATEWAY")
+    database_url: str = Field("", alias="DATABASE_URL")
+    db_auto_create: bool = Field(False, alias="DB_AUTO_CREATE")
+
+    redis_url: str | None = Field(None, alias="REDIS_URL")
 
     # Outcome observation windows (days)
     window_response_days: int = Field(7, alias="WINDOW_RESPONSE_DAYS")
@@ -113,6 +122,11 @@ class Settings(BaseSettings):
     @property
     def model_path(self) -> Path:
         return Path(self.model_snapshot_dir)
+
+    @property
+    def uses_sql(self) -> bool:
+        """True when a durable SQL backend is configured."""
+        return self.storage_gateway == "postgres" and bool(self.database_url)
 
 
 @lru_cache

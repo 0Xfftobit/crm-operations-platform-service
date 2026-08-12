@@ -28,4 +28,5 @@ def _reset_state(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(create_app(), headers={"X-API-Key": API_KEY})
+    with TestClient(create_app(), headers={"X-API-Key": API_KEY}) as c:
+        yield c

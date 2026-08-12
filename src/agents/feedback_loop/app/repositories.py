@@ -1,7 +1,9 @@
-"""In-memory repositories with a narrow interface.
+"""In-memory repositories with a narrow interface, plus SQL-backed dispatch.
 
 A real deployment swaps these for a data-warehouse/Postgres/S3-backed gateway.
-The in-memory default keeps the engine self-contained and testable.
+The in-memory default keeps the engine self-contained and testable. When
+``STORAGE_GATEWAY=postgres`` and ``DATABASE_URL`` is set, the ``get_*_repository``
+functions return SQLAlchemy-backed equivalents instead.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from functools import wraps
 from threading import RLock
 from typing import Any
 
+from app.core.config import get_settings
 from app.domain.models import (
     DriftRecord,
     Experiment,
@@ -343,47 +346,69 @@ _retrain_runs = RetrainingRunRepository()
 _events = EventLogRepository()
 
 
+def _sql():
+    from app.db import sql_repositories as sr
+    return sr
+
+
 def get_prediction_repository() -> PredictionRepository:
-    return _predictions
+    return _sql().SqlPredictionRepository() if get_settings().uses_sql else _predictions
 
 
 def get_outcome_repository() -> OutcomeRepository:
-    return _outcomes
+    return _sql().SqlOutcomeRepository() if get_settings().uses_sql else _outcomes
 
 
 def get_feedback_repository() -> FeedbackRepository:
-    return _feedback
+    return _sql().SqlFeedbackRepository() if get_settings().uses_sql else _feedback
 
 
 def get_label_repository() -> LabelRepository:
-    return _labels
+    return _sql().SqlLabelRepository() if get_settings().uses_sql else _labels
 
 
 def get_dataset_repository() -> TrainingDatasetRepository:
-    return _datasets
+    return _sql().SqlTrainingDatasetRepository() if get_settings().uses_sql else _datasets
 
 
 def get_model_repository() -> ModelVersionRepository:
-    return _models
+    return _sql().SqlModelVersionRepository() if get_settings().uses_sql else _models
 
 
 def get_drift_repository() -> DriftRepository:
-    return _drift
+    return _sql().SqlDriftRepository() if get_settings().uses_sql else _drift
 
 
 def get_experiment_repository() -> ExperimentRepository:
-    return _experiments
+    return _sql().SqlExperimentRepository() if get_settings().uses_sql else _experiments
 
 
 def get_retrain_run_repository() -> RetrainingRunRepository:
-    return _retrain_runs
+    return _sql().SqlRetrainingRunRepository() if get_settings().uses_sql else _retrain_runs
 
 
 def get_event_log_repository() -> EventLogRepository:
-    return _events
+    return _sql().SqlEventLogRepository() if get_settings().uses_sql else _events
 
 
 def reset_repositories() -> None:
+    # Tests may leave the environment in an invalid state for get_settings().
+    # In that case fall back to clearing the in-memory singletons directly.
+    try:
+        if get_settings().uses_sql:
+            get_prediction_repository().clear()
+            get_outcome_repository().clear()
+            get_feedback_repository().clear()
+            get_label_repository().clear()
+            get_dataset_repository().clear()
+            get_model_repository().clear()
+            get_drift_repository().clear()
+            get_experiment_repository().clear()
+            get_retrain_run_repository().clear()
+            get_event_log_repository().clear()
+            return
+    except Exception:  # noqa: BLE001 — best-effort reset
+        pass
     _predictions.clear()
     _outcomes.clear()
     _feedback.clear()
