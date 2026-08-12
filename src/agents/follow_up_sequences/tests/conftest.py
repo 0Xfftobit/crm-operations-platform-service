@@ -36,6 +36,9 @@ def _reset_state():
         providers.reset()
         frequency.reset_store()
         kafka_bus.reset_kafka_bus()
+        from app.core.resilience import reset_circuits
+
+        reset_circuits()
 
     _clean()
     yield

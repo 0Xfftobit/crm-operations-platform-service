@@ -11,6 +11,7 @@ from __future__ import annotations
 from functools import wraps
 from threading import RLock
 
+from app.core.config import get_settings
 from app.domain.models import (
     Contact,
     EngagementEvent,
@@ -203,14 +204,46 @@ _engagement = EngagementRepository()
 _audit = AuditRepository()
 
 
-def get_sequence_repository() -> SequenceRepository: return _sequences
-def get_contact_repository() -> ContactRepository: return _contacts
-def get_enrollment_repository() -> EnrollmentRepository: return _enrollments
-def get_ledger_repository() -> LedgerRepository: return _ledger
-def get_engagement_repository() -> EngagementRepository: return _engagement
-def get_audit_repository() -> AuditRepository: return _audit
+def _sql():
+    from app.db import sql_repositories as sr
+    return sr
+
+
+def get_sequence_repository():
+    return _sql().SqlSequenceRepository() if get_settings().uses_sql else _sequences
+
+
+def get_contact_repository():
+    return _sql().SqlContactRepository() if get_settings().uses_sql else _contacts
+
+
+def get_enrollment_repository():
+    return _sql().SqlEnrollmentRepository() if get_settings().uses_sql else _enrollments
+
+
+def get_ledger_repository():
+    return _sql().SqlLedgerRepository() if get_settings().uses_sql else _ledger
+
+
+def get_engagement_repository():
+    return _sql().SqlEngagementRepository() if get_settings().uses_sql else _engagement
+
+
+def get_audit_repository():
+    return _sql().SqlAuditRepository() if get_settings().uses_sql else _audit
 
 
 def reset_repositories() -> None:
     for repo in (_sequences, _contacts, _enrollments, _ledger, _engagement, _audit):
         repo.clear()
+    if get_settings().uses_sql:
+        from app.db import engine
+
+        engine.create_all()
+        sr = _sql()
+        sr.SqlSequenceRepository().clear()
+        sr.SqlContactRepository().clear()
+        sr.SqlEnrollmentRepository().clear()
+        sr.SqlLedgerRepository().clear()
+        sr.SqlEngagementRepository().clear()
+        sr.SqlAuditRepository().clear()

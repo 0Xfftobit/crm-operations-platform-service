@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     api_key: str = Field("change-me-dev-key", alias="API_KEY")
 
     # ── Persistence ────────────────────────────────────────────────────────
-    # memory (default, volatile) | postgres (durable, needs DATABASE_URL + '.[postgres]').
+    # memory (default, volatile) | postgres (durable, needs DATABASE_URL).
     storage_gateway: str = Field("memory", alias="STORAGE_GATEWAY")
     database_url: str = Field("", alias="DATABASE_URL")
     db_auto_create: bool = Field(False, alias="DB_AUTO_CREATE")

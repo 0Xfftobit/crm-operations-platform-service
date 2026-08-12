@@ -21,6 +21,23 @@ def test_ready(client):
     assert body["uses_sql"] is False
 
 
+def test_ready_dependency_checks(client):
+    resp = client.get("/api/v1/ready")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "checks" in body
+    assert body["checks"]["storage"]["status"] == "ok"
+    assert body["checks"]["postgres"]["status"] == "not_configured"
+    assert body["checks"]["redis"]["status"] == "not_configured"
+    assert body["checks"]["kafka"]["status"] == "not_configured"
+
+
+def test_request_id_is_echoed(client):
+    resp = client.get("/api/v1/health", headers={"X-Request-ID": "req-abc-123"})
+    assert resp.status_code == 200
+    assert resp.headers["X-Request-ID"] == "req-abc-123"
+
+
 def test_openapi(client):
     resp = client.get("/openapi.json")
     assert resp.status_code == 200

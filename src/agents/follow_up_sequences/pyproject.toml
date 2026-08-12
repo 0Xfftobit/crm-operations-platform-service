@@ -11,6 +11,8 @@ dependencies = [
     "structlog>=24.4.0",
     "python-dotenv>=1.0.1",
     "httpx>=0.28.0",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +22,8 @@ postgres = ["sqlalchemy>=2.0", "alembic>=1.13", "psycopg[binary]>=3.1"]
 redis = ["redis>=5.0"]
 # Kafka bus (EVENT_SOURCE_GATEWAY=kafka) — optional, lazily imported.
 kafka = ["aiokafka>=0.11"]
+# Prometheus metrics endpoint — optional, in-memory fallback is built-in.
+metrics = ["prometheus-client>=0.21"]
 # Distributed tracing (TRACING_ENABLED=true) — optional, lazily imported.
 otel = [
     "opentelemetry-sdk>=1.27",
@@ -32,6 +36,8 @@ dev = [
     "pytest>=8.3.0",
     "ruff>=0.8.0",
     "aiokafka>=0.11",
+    "prometheus-client>=0.21",
+    "alembic>=1.13",
 ]
 
 [build-system]
