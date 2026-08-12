@@ -5,14 +5,20 @@ stays a self-contained engine under src/agents/<name>/ with its own app + deps.
 """
 from __future__ import annotations
 
-import logging
 from uuid import uuid4
 
 import httpx
+import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
+from config.logging import configure as configure_logging
 from config.settings import Settings, get_settings
+from src.api.metrics import MetricsMiddleware, cross_agent_calls_total, generate_metrics
+from src.api.middleware.request_id import RequestIDMiddleware
+
+configure_logging(get_settings().log_level)
 
 # agent_folder -> url-slug
 AGENTS = {
@@ -36,7 +42,7 @@ _HOP_BY_HOP = {
     "upgrade",
 }
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _upstream(agent: str, settings: Settings) -> str:
@@ -68,6 +74,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Request-id context propagation and observability metrics.
+app.add_middleware(RequestIDMiddleware)
+app.add_middleware(MetricsMiddleware)
 
 
 @app.get("/health")
@@ -115,6 +125,14 @@ async def ready(settings: Settings = Depends(get_settings)) -> dict[str, str | d
     return {"status": "ok" if ready_ok else "degraded", "agents": out}
 
 
+@app.get("/metrics")
+async def metrics() -> Response:
+    return PlainTextResponse(
+        generate_metrics(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
 _SLUG_TO_AGENT = {s: a for a, s in AGENTS.items()}
 
 
@@ -159,18 +177,15 @@ async def proxy(slug: str, path: str, request: Request, settings: Settings = Dep
                 headers=headers,
             )
     except httpx.TimeoutException:
-        logger.warning(
-            "gateway_proxy_timeout",
-            extra={"agent": agent, "url": url, "timeout": timeout},
-        )
+        cross_agent_calls_total.inc(client=agent, status="timeout")
+        logger.warning("gateway_proxy_timeout", agent=agent, url=url, timeout=timeout)
         return Response(status_code=504, content="upstream timeout")
     except httpx.ConnectError as e:
-        logger.warning(
-            "gateway_proxy_connect_error",
-            extra={"agent": agent, "url": url, "error": str(e)},
-        )
+        cross_agent_calls_total.inc(client=agent, status="connect_error")
+        logger.warning("gateway_proxy_connect_error", agent=agent, url=url, error=str(e))
         return Response(status_code=502, content=f"upstream unreachable: {e}")
 
+    cross_agent_calls_total.inc(client=agent, status=str(up.status_code))
     response_headers = {
         k: v
         for k, v in up.headers.items()
