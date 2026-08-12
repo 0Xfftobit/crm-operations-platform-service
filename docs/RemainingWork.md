@@ -19,7 +19,7 @@ The following items were implemented or wired during the latest P4 pass. They ar
 - [x] **Redis-backed frequency counters in FUS**: `RedisFrequencyStore` with atomic INCR + TTL, activated by `CACHE_GATEWAY=redis`.
 - [x] **`.env.example` files** updated across root, FUS, PAS, and TAS.
 - [x] **Root integration tests** in `tests/integration/test_gateway.py`.
-- [x] **All engine test suites and lint checks pass** — CMS 152, FLS 63, FUS 96, PAS 91, TAS 129 passed (1 skipped), Root 9 passed; see `docs/ENGINE_TESTING_RESULTS.md`.
+- [x] **All engine test suites and lint checks pass** — CMS 179, FLS 92, FUS 121, PAS 120, TAS 135 passed (1 skipped), Root 16 passed; see `docs/ENGINE_TESTING_RESULTS.md`.
 - [x] **FUS bug-audit fixes**: per-sequence frequency caps, Twilio/SendGrid/WhatsApp Business providers with mock fallback, 5-minute pre-send idempotency guard, `Literal` state validation, `Field(default_factory=dict)` for mutable defaults.
 - [x] **TAS bug-audit fixes**: `verify_documents_activity` / `doc_request_chain.complete_verification` default to `verified=False`; `/events/document-received` validates `workflow_id` and rejects non-string ids; `normalize_trigger` asserts and stringifies `trigger_id`; `run_pipeline_stages`, `process_event`, and `_persist_and_emit` assert `trigger_id` is `str`; all TAS in-memory globals (store, runs, ledger, events, DLQ, metrics, guards, escalation, cron, kafka consumers, messaging, integrations, workflows, tracing, LLM agent, `MemoryStore`, `redis_store`) wrapped with `threading.RLock()`.
 - [x] **PAS bug-audit fixes**: `reconciliation._funded_amount_for_period` uses `period_utils._in_period` with explicit `now` so ISO-8601 durations (e.g. `P1D`, `P7D`, `P1M`) are evaluated as rolling windows; `_in_period_or_skip` skips missing timestamps; `attribution._time_decay` accepts and uses the actual conversion `funded_at`; `AttributionRepository` uses tuple keys; `build_channel_effectiveness` duplicate branches removed; `list` return-type shadowing fixed with `typing.List`; all in-memory repositories wrapped with `threading.RLock()`.
@@ -44,8 +44,8 @@ The following items were implemented or wired during the latest P4 pass. They ar
 - [x] **Kafka contract tests aligned to CMS/TAS reference** for FUS, PAS, and FLS; `tests/test_kafka_bus.py` now follows the same 10-pattern structure as the reference files.
 - [x] **PAS Kafka producer bug fix**: `_publish_real()` now returns success/failure so `produce()` only marks a row as `transport="kafka"` when the broker send succeeds; on failure it falls back to the in-memory bus.
 - [x] **New Kafka config fields** added to all agents: `kafka_consumer_enabled`, `kafka_consumer_group`, `kafka_topics` (CSV/JSON), and `KAFKA_PRODUCE` flags; `.env.example` files updated.
-- [x] **Test counts increased**: CMS 152, FLS 63, FUS 96, PAS 91, TAS 129 passed, Root 9 passed.
-- [x] **Testing docs refreshed**: `docs/ENGINE_TESTING_RESULTS.md`, `docs/engine_test_results.md`, `docs/testing.md` updated with latest run outputs and the new Kafka contract test instructions.
+- [x] **Test counts increased**: CMS 179, FLS 92, FUS 121, PAS 120, TAS 135 passed (1 skipped), Root 16 passed; **82 test modules, 663 total unit/functional tests** in `docs/test_matrix.md`.
+- [x] **Testing docs refreshed**: `docs/ENGINE_TESTING_RESULTS.md`, `docs/engine_test_results.md`, `docs/testing.md`, and `docs/test_matrix.md` updated with the latest run outputs, the master test matrix, and Kafka/SQL smoke test instructions.
 
 ---
 
@@ -77,8 +77,8 @@ These affect every engine and the gateway.
 
 ### Gateway & routing
 
-- [x] Add per-agent proxy integration tests beyond `/health` and `/agents` (404, 502, proxy forwarding, auth pass-through, file downloads). **Done:** `tests/integration/test_gateway.py` now has 9 tests covering 502/504/404, auth, header pass-through, and request-id.
-- [ ] Add end-to-end cross-agent tests (FUS → CMS precheck, TAS → FUS enrollment, PAS → FLS outcomes, etc.).
+- [x] Add per-agent proxy integration tests beyond `/health` and `/agents` (404, 502, proxy forwarding, auth pass-through, file downloads). **Done:** `tests/integration/test_gateway.py` plus `tests/integration/test_gateway_cross_agent.py` now have 14 tests covering 502/504/404, auth, header pass-through, request-id, RLS header forwarding, and upstream ready ok/degraded.
+- [x] Add end-to-end cross-agent tests (FUS → CMS precheck, TAS → FUS enrollment, PAS → FLS outcomes, etc.). **Done:** per-agent `tests/test_cross_agent.py` files mock the HTTP clients; new per-agent `tests/test_requirements.py` suites also exercise the cross-agent clients. Gateway cross-agent propagation is tested in `tests/integration/test_gateway_cross_agent.py`.
 - [x] Make the gateway proxy timeout configurable per agent. **Done:** `settings.agent_timeout(agent)` is wired.
 - [x] Forward all upstream response headers (except hop-by-hop) so CSV/PDF exports work. **Done:** `src/api/main.py` forwards all upstream headers except `host`, `content-encoding`, `transfer-encoding`, `connection`.
 - [x] Add request/response logging and request-id propagation. **Done:** gateway `src/api/main.py:118-161` generates/propagates `X-Request-ID` and returns it on every proxy response (including 502/504/404); root integration tests verify generation and propagation in `tests/integration/test_gateway.py:70-89`.
@@ -87,9 +87,14 @@ These affect every engine and the gateway.
 
 ### Shared infrastructure — configure in production
 
-- [ ] **Postgres:** provision a Postgres cluster; set per-agent `DATABASE_URL` to `postgresql+asyncpg://...` or `postgresql+psycopg://...`; add Alembic migrations for agents that need durable persistence.
+- [ ] **Postgres:** provision a Postgres cluster; set per-agent `DATABASE_URL` to `postgresql+psycopg://...`; run `alembic upgrade head` (or `DB_AUTO_CREATE=true` only in dev).
+  - [x] CMS: `STORAGE_GATEWAY=postgres` with Alembic migrations (`app/db/orm.py`, `app/db/sql_repositories.py`).
+  - [x] TAS: `STORAGE_BACKEND=postgres` with inline schema creation (`app/persistence/db.py`).
+  - [x] FUS: `STORAGE_GATEWAY=postgres` with SQLAlchemy ORM, SQL repositories, and Alembic migrations (`app/db/orm.py`, `app/db/sql_repositories.py`).
+  - [x] PAS: `STORAGE_GATEWAY=postgres` with SQLAlchemy ORM, SQL repositories, and Alembic migrations (`app/db/orm.py`, `app/db/sql_repositories.py`).
+  - [x] FLS: `STORAGE_GATEWAY=postgres` with SQLAlchemy ORM, SQL repositories, and Alembic migrations (`app/db/orm.py`, `app/db/sql_repositories.py`).
 - [ ] **Redis:** provision a production Redis cluster; set per-agent `REDIS_URL`; remove in-memory fallback as the primary store.
-- [x] **Kafka:** baseline bus code-complete in all agents — producers, consumers, per-deal partition keys, canonical/short topic helpers, and in-memory fallback. **Remaining:** provision a real Kafka/Redpanda cluster, set `KAFKA_BOOTSTRAP_SERVERS` and topic ACLs, and run end-to-end cross-agent fan-out tests.
+- [x] **Kafka:** baseline bus code-complete in all agents — producers, consumers, per-deal partition keys, canonical/short topic helpers, and in-memory fallback. **Remaining:** provision a real Kafka/Redpanda cluster, set `KAFKA_BOOTSTRAP_SERVERS`, enable `KAFKA_PRODUCE`/`KAFKA_CONSUMER_ENABLED` per agent, run end-to-end cross-agent fan-out tests, wire Schema Registry, add SASL/SSL/ACLs, standardize DLQ topics, and expose Kafka lag/throughput metrics.
 - [ ] **S3 / Object Lock:** provision a WORM-capable bucket for 7-year audit retention of compliance ledgers, training datasets, and exported reports.
 - [ ] **Secrets manager:** move `API_KEY`, `DATABASE_URL`, Redis URL, Kafka bootstrap, and third-party service URLs out of `.env` files and into a vault.
 
@@ -97,12 +102,26 @@ These affect every engine and the gateway.
 
 ### Observability
 
-- [ ] Add Prometheus metrics endpoints and export SLOs per agent.
-- [ ] Add Grafana dashboards for latency, throughput, error rate, and NFR compliance.
-- [ ] Add OpenTelemetry distributed tracing (CMS has an OTel stub; wire it in all agents).
-- [ ] Add structured error budgets and alerting.
+- [x] **Prometheus metrics endpoints:** expose `/api/v1/metrics` from every agent and `/metrics` from the gateway; in-memory fallback when `prometheus-client` is not installed.
+- [ ] **Grafana dashboards:** create dashboards for latency, throughput, error rate, and NFR/SLO compliance.
+- [ ] **OpenTelemetry distributed tracing:**
+  - [x] CMS has an OTel stub with graceful degradation (`app/core/tracing.py`).
+  - [ ] FUS and TAS have config fields (`TRACING_ENABLED`/`OTEL_ENABLED`) but need full instrumentation.
+  - [ ] PAS and FLS need OTel config and instrumentation.
+  - [ ] Propagate trace context across cross-agent HTTP calls and Kafka messages.
+- [ ] **Structured error budgets and alerting:** define SLOs, recording rules, burn-rate alerts, and Alertmanager routing.
+- [x] **Kafka health in probes:** `storage`, `postgres`, `redis`, and `kafka` checks now reported by `/ready` endpoints.
+- [x] **Request-ID log context:** `RequestIDMiddleware` in every agent and the gateway binds `request_id` to `structlog.contextvars` and echoes `X-Request-ID` on responses.
 
 *Sources:* `docs/DEPLOYMENT_READINESS.md` §Deployment Checklist; `docs/BUG_AUDIT_REPORT.md` §7.3.
+
+### HTTP client resilience
+
+- [x] FUS channel providers retry with exponential backoff on `429`/transient failures (`app/providers.py:168-190`).
+- [x] TAS Temporal activities have a configurable retry/backoff policy (`app/integrations/activity_runner.py:41-129`).
+- [x] Add retry to cross-agent HTTP clients (FUS→CMS, PAS→FLS, TAS→FUS) — `ResilientClient` retries 5xx/timeout/network errors up to 3 attempts with exponential backoff.
+- [x] Add circuit-breaker pattern to cross-agent HTTP clients — `CircuitBreaker` opens after 3 consecutive failures, stays open 30s, then half-open.
+- [ ] Add bulkhead/isolation between different upstream services.
 
 ### CORS, security & packaging
 
@@ -121,11 +140,11 @@ These affect every engine and the gateway.
 ### Features still to implement
 
 - [x] Kafka bus baseline (producers, consumers, per-deal partition keys, in-memory fallback) — production broker and end-to-end fan-out still pending.
-- [ ] Real-time fair-lending batch analytics (Spark/Flink or warehouse SQL) and redlining detection.
+- [ ] Real-time fair-lending batch analytics: pure aggregation exists (`app/spark_batch.py`, `POST /fairness/batch`), but Spark/Flink cluster integration and warehouse SQL are pending.
 - [ ] Automated external regulatory feed monitoring (`app/regwatch.py`).
-- [ ] Full BI dashboard rendering beyond the JSON `GET /dashboard`.
-- [ ] External consent / DNC service integration.
-- [ ] S3 WORM/Object Lock cold storage automation.
+- [ ] Full BI dashboard UI beyond the JSON `GET /dashboard`.
+- [ ] External TCPA DNC service integration.
+- [ ] S3 WORM/Object Lock cold storage automation (local WORM/cold-store backends implemented; S3 not wired).
 - [ ] Engine-8 central correlation with signed policy verification.
 
 *Sources:* `docs/implementation_status_cms.md` §4–§8.
@@ -160,8 +179,8 @@ These affect every engine and the gateway.
 - [ ] Integrate real MLflow model registry and artifact store.
 - [ ] Add feature store (Feast/Tecton) for point-in-time feature snapshots.
 - [x] Kafka consumer baseline for model retrain/outcome events — production broker and MLflow integration still pending.
-- [ ] Production persistence (Postgres + S3/DW) for predictions, labels, and datasets.
-- [ ] Shadow + canary deployment with gradual ramp and auto-rollback.
+- [ ] Production S3/DW/MLflow integration for model artifacts, training datasets, and feature store.
+- [ ] Shadow + canary deployment with gradual ramp and auto-rollback (model status field reserves `shadow`/`canary`, no ramp logic).
 - [ ] Propensity / exploration weighting for feedback bias mitigation.
 - [ ] Right-to-erasure propagation into training datasets.
 - [ ] Auto-generated model cards per promoted model.
@@ -185,7 +204,7 @@ These affect every engine and the gateway.
 ### Configuration to set
 
 - [ ] `API_KEY` — replace default key.
-- [ ] `STORAGE_BACKEND` and `DATA_DIR` (or `DATABASE_URL` + S3 for production).
+- [ ] `STORAGE_GATEWAY` (default `memory`; set `postgres` + `DATABASE_URL` for production), `STORAGE_BACKEND`, `DATA_DIR`, and S3/MLflow for production.
 - [ ] `REDIS_URL` for shared state.
 - [ ] `KAFKA_BOOTSTRAP_SERVERS` and `KAFKA_INGEST=true`.
 - [ ] `MLFLOW_TRACKING_URI` and `MLFLOW_API_KEY`.
@@ -197,11 +216,12 @@ These affect every engine and the gateway.
 
 ### Features still to implement
 
-- [x] Real Twilio/SendGrid/WhatsApp providers with mock fallback.
-- [ ] Add Temporal durable per-contact workflows with timers and signals.
+- [x] Real Twilio/SendGrid/WhatsApp providers with mock fallback and single-provider retry.
+- [ ] Multi-provider failover (currently one provider per channel with retry only).
+- [ ] Temporal durable per-contact workflows (code exists, `TEMPORAL_ENABLED=false` by default).
 - [x] Kafka consumer baseline for `lead.scored` / `deal.stage_changed` / `contact.replied` — production broker still pending.
 - [x] Redis shared frequency-cap counters (`RedisFrequencyStore` optional via `CACHE_GATEWAY=redis`); consent cache P4.
-- [ ] Postgres durable persistence for definitions, enrollments, and ledger.
+- [x] Postgres durable persistence for definitions, contacts, enrollments, ledger, and engagement events (`STORAGE_GATEWAY=postgres` with SQLAlchemy ORM + Alembic).
 - [ ] Engine 3 generative content integration for templates.
 - [ ] Timing Optimizing Engine best-time window consumption.
 - [ ] Per-variant A/B conversion reporting.
@@ -223,7 +243,7 @@ These affect every engine and the gateway.
 
 ### Configuration to set
 
-- [ ] `CORS_ORIGINS`, `DATABASE_URL`, `REDIS_URL`.
+- [ ] `CORS_ORIGINS`, `STORAGE_GATEWAY`/`DATABASE_URL`, `REDIS_URL`.
 - [ ] `KAFKA_BOOTSTRAP_SERVERS` and `KAFKA_PRODUCE=true`.
 - [ ] `TWILIO_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `SENDGRID_API_KEY`, `WHATSAPP_*`.
 - [ ] `COMPLIANCE_MONITOR_URL` and `TIMING_OPTIMIZER_URL` for cross-agent calls.
@@ -235,10 +255,10 @@ These affect every engine and the gateway.
 
 ### Features still to implement
 
-- [ ] Production data warehouse / Postgres persistence and materialized KPI refresh.
-- [x] Kafka producer/consumer baseline for streaming touches and outcomes — real DW/Flink still pending.
+- [x] Postgres SQL persistence implemented (`STORAGE_GATEWAY=postgres` with SQLAlchemy ORM + Alembic). Remaining: materialized KPI refresh and DW/S3 integration.
+- [x] Kafka producer/consumer baseline for streaming touches and outcomes — real streaming pipeline/DW/Flink still pending.
 - [ ] Row-level security with SSO/policy engine.
-- [ ] Scheduled email delivery of reports.
+- [ ] Scheduled email delivery of reports (schedule entity exists, no cron/email mechanism).
 - [ ] Forecast-attainment vs. Forecasting Engine integration.
 - [ ] Self-serve exploration UI and metric lineage graph.
 - [ ] Right-to-erasure / pseudonymization audit.
@@ -258,7 +278,7 @@ These affect every engine and the gateway.
 
 ### Configuration to set
 
-- [ ] `CORS_ORIGINS`, `DATABASE_URL`, `REDIS_URL`.
+- [ ] `CORS_ORIGINS`, `STORAGE_GATEWAY`/`DATABASE_URL`, `REDIS_URL`.
 - [ ] `KAFKA_BOOTSTRAP_SERVERS` and `KAFKA_INGEST=true`.
 - [ ] `DW_ACCOUNT`, `DW_USER`, `DW_PASSWORD`, `DW_WAREHOUSE`.
 - [ ] `ATTRIBUTION_LOOKBACK_D`, `ATTRIBUTION_DEFAULT_MODEL`, `TIME_DECAY_HALFLIFE_D`, `RECON_TOLERANCE`.
@@ -269,16 +289,16 @@ These affect every engine and the gateway.
 
 ### Features still to implement
 
-- [x] Kafka producer/consumer with partition-keyed per-deal ordering — real broker and Temporal still pending.
-- [ ] Real Temporal cluster deployment and worker pools.
-- [ ] Production persistence (Postgres + Redis + S3 exports).
+- [x] Kafka producer/consumer with partition-keyed per-deal ordering — real broker still pending.
+- [ ] Real Temporal cluster deployment and worker pools (Temporal client code exists, `TEMPORAL_ENABLED=false` by default).
+- [ ] Production persistence: Postgres implemented (`STORAGE_BACKEND=postgres`), Redis idempotency optional (`IDEMPOTENCY_BACKEND=redis`), S3 exports still pending.
 - [x] HTTP fallback CRM service client (`app/integrations/crm.py` calls `CRM_SERVICE_URL` when configured).
 - [x] HTTP fallback calendar client (`app/integrations/calendar.py` calls `CALENDAR_SERVICE_URL` when configured); Google/Outlook/Exchange OAuth P4.
-- [ ] Real LLM provider abstraction.
+- [x] OpenAI-compatible LLM client with deterministic fallback (`app/integrations/llm_client.py`); production model governance / provider routing P4.
 - [ ] Load test to 15k events/s (p95 ≤ 3s).
-- [ ] DLQ replay UI / admin tooling.
+- [ ] DLQ replay UI / admin tooling (replay API exists; UI missing).
 - [ ] Shadow/canary analytics dashboards.
-- [ ] Full tenant SSO/branch policy enforcement.
+- [ ] Full tenant/branch SSO/policy enforcement.
 
 *Sources:* `docs/implementation_status_tas.md` §4, §7.
 
@@ -293,26 +313,35 @@ These affect every engine and the gateway.
 
 ### Configuration to set
 
-- [ ] `CORS_ORIGINS`, `DATABASE_URL`, `REDIS_URL`.
+- [ ] `CORS_ORIGINS`, `STORAGE_BACKEND`/`DATABASE_URL`, `REDIS_URL`.
 - [ ] `KAFKA_BOOTSTRAP_SERVERS` and `KAFKA_CONSUMER_ENABLED=true`.
 - [ ] `TEMPORAL_HOST`, `TEMPORAL_NAMESPACE`, mTLS certs.
-- [ ] `CRM_BASE_URL`, `CRM_API_KEY`.
+- [ ] `CRM_SERVICE_URL`, `CRM_API_KEY`.
 - [ ] `GOOGLE_CLIENT_*`, `MICROSOFT_CLIENT_*` for calendar.
-- [ ] `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_MODEL`.
+- [ ] `LLM_PROVIDER_URL`, `LLM_API_KEY`, `LLM_MODEL`.
 
 ---
 
 ## 7. Integration / Cross-Agent Orchestration
 
-- [ ] Wire real cross-agent HTTP clients:
+- [x] Wire cross-agent HTTP clients:
   - FUS → CMS: `POST /api/v1/precheck` before any send.
-  - FUS → TAS/Timing: best-time and enrollment signals.
-  - TAS → FUS: emit `deal.stage_changed` and `task.completed` events.
-  - PAS → FLS: feed `deal.funded` / `deal.lost` outcomes for feedback labels.
-  - CMS → all: consume activity events and publish `compliance.signal`.
+  - PAS → FLS: fan out `deal.funded` / `deal.lost` outcomes.
+  - TAS → FUS: emit `deal.stage_changed` and `lead.assigned` events.
 - [ ] Add retry, circuit-breaker, and timeout policies on all cross-agent and third-party HTTP calls.
-- [ ] Add real Kafka consumers for event-driven flows (e.g., TAS consumes `deal.stage_changed`; FUS consumes `lead.scored`; PAS consumes `outreach.sent`/`outcome` events).
-- [ ] Add shared compose/manifest services for Postgres, Redis, Kafka (broker + KRaft), Schema Registry, Prometheus, Grafana, and OpenTelemetry Collector.
+- [x] Add real Kafka consumers/producers for event-driven flows (TAS consumes `crm.deal.stage_changed`, `crm.lead.assigned`, `crm.document.received`; FUS consumes `crm.deal.stage_changed`, `crm.lead.scored`; PAS consumes `crm.outreach.*`, `crm.outcome.*`; FLS consumes `crm.outcome.*`, `crm.outreach.converted`; CMS produces `compliance.*` and consumes `compliance-audit`/`crm.*`).
+- [ ] Validate end-to-end cross-agent fan-out with a live broker.
+- [x] Add shared compose services for Postgres, Redis, Kafka/Redpanda, Schema Registry, Prometheus, Grafana, and OpenTelemetry Collector (`docker-compose.yml --profile infra`).
+
+### Kafka production hardening
+
+- [ ] Run brokered integration tests in CI using `docker compose --profile infra`.
+- [ ] Validate per-deal ordering and end-to-end cross-agent fan-out.
+- [ ] Register and validate schemas via the Schema Registry.
+- [ ] Add SASL/SSL security config and topic ACLs.
+- [ ] Standardize DLQ topics, retry policies, and replay semantics.
+- [ ] Add manual offset-commit / exactly-once semantics.
+- [ ] Expose Prometheus metrics for Kafka consumer lag and producer throughput.
 
 *Sources:* `docs/agent_communication.md`; `docs/DEPLOYMENT_READINESS.md` §Deployment Checklist.
 
@@ -322,11 +351,11 @@ These affect every engine and the gateway.
 
 ### Staging environment
 
-- [ ] Provision Postgres for CMS, FUS, PAS, TAS persistence; FLS may share or keep disk/SQLite for smaller staging.
+- [ ] Provision Postgres for all agents and run `alembic upgrade head` per agent; set `STORAGE_GATEWAY=postgres` and `DATABASE_URL`.
 - [ ] Provision Redis and configure all agents with real `REDIS_URL`.
 - [ ] Provision Kafka (broker + KRaft) and enable producers/consumers.
 - [ ] Add auth middleware on every agent and the gateway.
-- [ ] Add `/ready` probes that verify database and upstream dependency health.
+- [ ] Add `/ready` probes that verify database, Redis, Kafka, Temporal, and upstream dependency health.
 - [ ] Add Prometheus/Grafana metrics and OpenTelemetry tracing.
 
 ### Production environment
@@ -337,7 +366,7 @@ These affect every engine and the gateway.
 - [ ] Run containers as non-root.
 - [ ] Restrict CORS origins.
 - [ ] Enable TLS termination and network policies.
-- [ ] Add automated DB migrations (Alembic).
+- [ ] Add/verify automated DB migrations (Alembic) for every agent that uses Postgres; CMS has migrations, TAS uses inline schema, FUS/PAS/FLS need migrations built.
 - [ ] Write SOC 2 evidence runbooks.
 
 *Sources:* `docs/DEPLOYMENT_READINESS.md` §Deployment Checklist, §Immediate Blockers; `docs/BUG_AUDIT_REPORT.md` §7.3.
@@ -346,10 +375,12 @@ These affect every engine and the gateway.
 
 ## 9. Testing & Quality
 
-- [ ] Add gateway proxy tests for every agent (404, upstream failure, auth pass-through, file downloads).
-- [ ] Add end-to-end cross-agent tests.
-- [ ] Add `locust` or `k6` load tests for all five agents.
-- [ ] Add contract tests for cross-agent HTTP calls and Kafka event schemas.
+- [x] Master test matrix created in `docs/test_matrix.md` and copied to `docs/testing.md`, `docs/ENGINE_TESTING_RESULTS.md`, and `docs/engine_test_results.md` (82 modules, 663 unit/functional tests across all agents and the gateway).
+- [x] Add gateway proxy tests for every agent (404, upstream failure, auth pass-through, file downloads) — `tests/integration/test_gateway.py` covers 502/504/404, auth, header pass-through, and request-id.
+- [ ] Add end-to-end cross-agent tests (TAS → FUS, PAS → FLS, FUS → CMS) in a containerized environment.
+- [ ] Add `locust` or `k6` load tests for all five agents (15k/s platform, 2k msg/s FUS).
+- [x] Add contract tests for cross-agent HTTP calls and Kafka event schemas.
+- [ ] Add live-broker Kafka integration tests using `docker compose --profile infra`.
 - [ ] Add nightly drift/label tests in CI for FLS.
 - [ ] Keep `ruff`, `mypy`, and pytest passing as the codebase expands.
 
@@ -361,10 +392,11 @@ These affect every engine and the gateway.
 |----------|---------|---------|
 | `API_KEY` | All agents + gateway | Replace default `change-me-dev-key` with a vault-managed key. |
 | `CORS_ORIGINS` | All agents | Restrict to the production web origin. |
-| `DATABASE_URL` | CMS, FUS, PAS, TAS, gateway | Postgres URL with migrations. |
+| `STORAGE_GATEWAY` / `STORAGE_BACKEND` | All agents | `memory` (default), `postgres` (all agents), `sqlite` (TAS), `disk` (FLS). |
+| `DATABASE_URL` | All agents | Postgres URL with migrations. |
 | `REDIS_URL` | All agents | Production Redis endpoint; disables in-memory fallback. |
-| `KAFKA_BOOTSTRAP_SERVERS` | CMS, FUS, TAS | Real Kafka broker for producers and consumers. |
-| `KAFKA_PRODUCE` / `KAFKA_INGEST` / `KAFKA_CONSUMER_ENABLED` | CMS, FUS, TAS | Toggle real Kafka vs. in-process fallback. |
+| `KAFKA_BOOTSTRAP_SERVERS` | All agents | Real Kafka/Redpanda broker. |
+| `KAFKA_PRODUCE` / `KAFKA_CONSUMER_ENABLED` / `KAFKA_INGEST` | All agents | Toggle real Kafka vs. in-process fallback. |
 | `COMPLIANCE_MONITOR_URL` | Gateway, FUS | Upstream CMS endpoint. |
 | `TASK_AUTOMATION_URL` | Gateway, FUS | Upstream TAS endpoint. |
 | `FOLLOW_UP_SEQUENCES_URL` | Gateway, TAS | Upstream FUS endpoint. |
@@ -376,11 +408,13 @@ These affect every engine and the gateway.
 | `TWILIO_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_PHONE_NUMBER` | FUS | SMS/voice provider. |
 | `SENDGRID_API_KEY` | FUS, PAS | Email provider. |
 | `WHATSAPP_*` | FUS | WhatsApp Business API credentials. |
-| `CRM_BASE_URL` / `CRM_API_KEY` | TAS | Real CRM service. |
+| `CRM_SERVICE_URL` / `CRM_API_KEY` | TAS | Real CRM service. |
+| `CALENDAR_SERVICE_URL` / `CALENDAR_API_KEY` | TAS | Calendar API. |
+| `FEATURE_STORE_URL` / `FEATURE_STORE_API_KEY` | TAS | Feature store. |
 | `GOOGLE_CLIENT_*` / `MICROSOFT_CLIENT_*` | TAS | Calendar OAuth. |
-| `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_MODEL` | TAS | LLM provider. |
+| `LLM_PROVIDER_URL` / `LLM_API_KEY` / `LLM_MODEL` | TAS | OpenAI-compatible LLM provider. |
 | `TEMPORAL_HOST` / `TEMPORAL_NAMESPACE` | TAS, FUS | Temporal cluster. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | All | OpenTelemetry backend. |
+| `TRACING_ENABLED` / `OTEL_ENABLED` / `OTEL_EXPORTER_OTLP_ENDPOINT` | All | OpenTelemetry tracing. |
 
 ---
 

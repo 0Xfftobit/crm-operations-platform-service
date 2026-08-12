@@ -14,10 +14,10 @@ The repository is **ready for local development, integration testing, staged dem
 | Core business logic correct | Green | 95% |
 | Cross-agent HTTP clients | Green | 75% |
 | Authentication / authorization | Yellow | 70% |
-| Persistence | Yellow | 40% |
+| Persistence | Green | 80% |
 | Kafka / event-driven flows | Yellow | 60% |
 | Redis / shared caching | Yellow | 60% |
-| Observability / metrics | Yellow | 50% |
+| Observability / metrics (code-level) | Green | 90% |
 | Production packaging / security | Yellow | 50% |
 
 ---
@@ -36,13 +36,17 @@ The repository is **ready for local development, integration testing, staged dem
 - **performance_analytics** bug-audit fixes landed in `reconciliation._funded_amount_for_period` (ISO-8601 duration windows via `_in_period`), `dashboard_builder._in_period_or_skip`, `attribution._time_decay` (uses actual `funded_at`), `AttributionRepository._items` tuple-key typing, `build_channel_effectiveness` duplicate-branch removal, and `typing.List` annotations to avoid `list` method shadowing; all in-memory repositories now use `threading.RLock()`.
 - **compliance_monitor** bug-audit fixes landed in coverage-loop interval handling, `http_source.poll_once` cursor hardening, `CaseUpdate.status`/`service._raise` typing, exact-year retention, float `days_left`, and `coldstore.py` S3/local `encoding="utf-8"` and single pagination.
 - **feedback_loop** bug-audit fixes are in place: A/B split sums to 100%, guardrail fallback only fires when no guardrail metric is configured, SHA-256 variant hashing, `timedelta` drift window, `joblib` serialization, `_precision_recall_f1` 4-tuple return type, and all in-memory repositories plus the drift reference store now use `threading.RLock()`.
-- Root integration tests in `tests/integration/test_gateway.py` cover auth, unknown agent, unconfigured upstream, production default-key rejection, and `X-Request-ID` generation/propagation (`test_gateway_generates_and_returns_request_id`, `test_gateway_propagates_existing_request_id`).
+- Root integration tests in `tests/integration/test_gateway.py` and `tests/integration/test_gateway_cross_agent.py` cover auth, unknown agent, unconfigured upstream, production default-key rejection, `X-Request-ID` generation/propagation, RLS header forwarding, and upstream ready ok/degraded.
 - **follow_up_sequences** now has a `SuppressionEvent` model and `POST /api/v1/webhooks/suppression` endpoint that permanently suppresses a contact on bounce/complaint/spam/block events, stops active enrollments, and emits `contact.suppressed`; `guardrails.check` stops sends on `contact.suppressed`; `Contact` includes `suppressed`, `suppressed_reason`, and `owner_id`.
 - **follow_up_sequences** now notifies the assigned LO/owner on inbound reply via `app/notifications.py:notify_owner_of_reply`, with an HTTP `POST` to `NOTIFICATION_SERVICE_URL` when configured and a fallback to an in-process log.
 - **follow_up_sequences** now wraps all repository methods with `threading.RLock()` via `app/repositories.py:_synchronized` and also protects the in-process event log (`app/events.py`), fallback notification log (`app/notifications.py`), mock provider send log (`app/providers.py`), and `FrequencyStore` counters (`app/frequency.py`) with `threading.RLock()`.
 - **follow_up_sequences** CMS precheck client (`app/clients/compliance_client.py`) sends `X-Request-ID` on every call.
 - **task_automation** FUS fan-out client (`app/clients/followup_client.py`) and **performance_analytics** FLS fan-out client (`app/clients/feedback_client.py`) now send `X-Request-ID`; the TAS client deduplicates header building through a shared `_headers()` helper.
-- The API gateway generates/propagates `X-Request-ID` and returns it on every proxied response, including 502/504/404 responses.
+- The API gateway generates/propagates `X-Request-ID` and returns it on every proxied response, including 502/504/404 responses, and binds `request_id` to `structlog` contextvars.
+- The API gateway now exposes `GET /metrics` and uses `MetricsMiddleware` to record `http_requests_total`, `http_request_duration_seconds`, `http_requests_in_flight`, and `cross_agent_calls_total`.
+- Every agent now has `app/core/metrics.py` (Prometheus-compatible in-memory registry, `Counter`/`Histogram`/`Gauge`, `generate_metrics()`), `app/core/resilience.py` (`CircuitBreaker`, `ResilientClient` with 3-attempt exponential backoff), and `GET /api/v1/metrics`; the metrics endpoint returns Prometheus exposition text and falls back to a manual text renderer when `prometheus-client` is not installed.
+- Every agent now has `RequestIDMiddleware` that binds `request_id` to `structlog.contextvars`, echoes `X-Request-ID` on responses, and clears contextvars after the request.
+- Every agent's `/ready` endpoint now reports per-dependency checks for `storage`, `postgres`, `redis`, and `kafka` with `ok`/`degraded`/`not_configured` status; overall status becomes `degraded` when a configured dependency is unavailable.
 - `docker-compose.yml` now wires the cross-agent fan-outs by default: `FUS_PRECHECK_ENABLED=true` + `COMPLIANCE_MONITOR_URL` for FUS, `OUTCOME_FANOUT_ENABLED=true` + `FEEDBACK_LOOP_URL` for PAS, and `FUS_FANOUT_ENABLED=true` + `FOLLOW_UP_SEQUENCES_URL` for TAS.
 - All five agents plus the gateway reject the default `change-me-dev-key` in non-local environments; production still requires a vault-managed key and per-tenant RBAC is not implemented.
 
@@ -65,9 +69,14 @@ The repository is **ready for local development, integration testing, staged dem
 | PII scan / data privacy | Done | `app/pii.py`, `app/privacy.py` |
 | Case/alert management | Done | `app/casework.py` |
 | Rule versioning + two-step approval | Done | `app/rules.py`, `app/api/rules.py` |
-| Kafka producer/consumer | Partial | `app/kafka_bus.py` supports optional `aiokafka` with graceful fallback |
+| Postgres durable persistence | Done | `STORAGE_GATEWAY=postgres`, SQLAlchemy ORM, SQL repositories, Alembic migrations, `/ready` health check |
+| Redis consent cache | Done | `CACHE_GATEWAY=redis` activates `app/cache.py` Redis-backed consent cache |
+| Kafka producer/consumer | Partial | `app/kafka_bus.py` supports optional `aiokafka` with canonical/short topics, per-deal partition keys, graceful fallback; real broker and fan-out pending |
 | S3 WORM cold storage | Partial | `app/worm.py`/`app/coldstore.py` support `s3` gateway; local fallback by default |
-| Production auth / RBAC | Partial | X-API-Key + X-Role for export; default `change-me-dev-key` rejected outside local/dev/test |
+| Real-time fair-lending batch analytics | Partial | Pure aggregation in `app/spark_batch.py`; Spark/Flink cluster integration pending |
+| BI dashboard | Partial | JSON `GET /dashboard` exists; visual BI UI not built |
+| External TCPA DNC service | Not done | `Consent.on_dnd_registry` flag only; no external DNC integration |
+| Production auth / RBAC (SSO/tenant/branch) | Not done | X-API-Key + `X-Role` headers; default `change-me-dev-key` rejected outside local/dev/test; no OAuth/SSO or row-level security |
 || Bug-audit hardening | Done | `threading.RLock()` on in-memory globals + repositories; exact-year retention; fractional `days_left`; case-status `Literal` |
 
 ### Feedback Loop System (FLS)
@@ -83,9 +92,9 @@ The repository is **ready for local development, integration testing, staged dem
 | Reproducible retraining + fairness gate | Done | `app/model_retrainer.py` |
 | Champion/challenger promotion + rollback | Done | `POST /models/{engine}/promote`, `/rollback` |
 | A/B test framework | Done | `app/abtest.py` |
-| MLflow model registry | Not done | In-memory `ModelVersionRepository` |
-| Kafka event capture | Not done | REST only |
-| Production persistence | Not done | `STORAGE_BACKEND=memory|disk` only |
+| MLflow model registry | Not done | In-memory `ModelVersionRepository`; `MLFLOW_TRACKING_URI` in `.env.example` but not wired |
+| Kafka event capture | Partial | `app/messaging/kafka_bus.py` consumer baseline for `crm.outcome.*`/`crm.outreach.converted`; real broker and MLflow integration pending |
+| Production persistence (Postgres/S3/DW) | Done | `STORAGE_GATEWAY=postgres`, SQLAlchemy ORM, SQL repositories, Alembic migrations, `/ready` Postgres health check. S3/DW/MLflow integration still pending. |
 || Bug-audit hardening | Done | A/B split sums to 100%, guardrail fallback fixed, SHA-256 hash, `timedelta` drift window, `joblib` serialization, repository RLock | |
 
 ### Follow-up Sequences Engine (FUS)
@@ -104,9 +113,10 @@ The repository is **ready for local development, integration testing, staged dem
 | Stop conditions | Done | reply/apply/opt-out/max-steps |
 | Personalization variables | Done | `app/personalize.py` |
 | CMS precheck HTTP client | Done | `app/clients/compliance_client.py` |
-| Real channel providers | Partial | Twilio/SendGrid/WhatsApp Business HTTP clients in `app/providers.py` with mock fallback when unconfigured |
-| Kafka consumer for `lead.scored`/`deal.stage_changed` | Not done | In-process `app/events.py` |
-| Postgres durable persistence | Not done | `STORAGE_GATEWAY=memory|postgres` optional |
+| Real channel providers | Partial | Twilio/SendGrid/WhatsApp Business HTTP clients with single-provider retry and mock fallback; multi-provider failover not implemented |
+| Kafka consumer/producer for `lead.scored`/`deal.stage_changed`/`outreach.*` | Partial | `app/messaging/kafka_bus.py` code-complete with in-memory fallback; real broker and cross-agent fan-out pending |
+| Postgres durable persistence | Done | `STORAGE_GATEWAY=postgres`, SQLAlchemy ORM, SQL repositories, Alembic migrations, `/ready` Postgres health check |
+| Temporal durable per-contact workflows | Not done | Temporal workflow code exists; `TEMPORAL_ENABLED=false` by default; in-process `tick()` |
 || Suppression webhook / permanent suppression | Done | `SuppressionEvent` + `POST /api/v1/webhooks/suppression`; `service.apply_suppression` (`app/service.py:365-383`); in-process per-tenant list |
 || LO/owner reply notifications | Done | `Contact.owner_id` + `app/notifications.py:notify_owner_of_reply`; optional HTTP service with in-process log fallback |
 || Repository + in-memory state thread-safety | Done | `threading.RLock()` via `_synchronized` in `app/repositories.py`; `RLock` in `app/events.py`, `app/notifications.py`, `app/providers.py`, and `app/frequency.py` |
@@ -128,11 +138,12 @@ The repository is **ready for local development, integration testing, staged dem
 | CSV/PDF export | Done | `app/pdf.py` |
 | Bug-audit fixes: ISO reconciliation, time-decay conversion, type shadowing | Done | `app/reconciliation.py:24-36`, `app/period_utils.py:48-88`, `app/attribution.py:74-87`, `app/repositories.py` |
 | Repository + in-memory state thread-safety | Done | `threading.RLock()` via `_synchronized` on every PAS repository (`app/repositories.py`) |
-| Unit + functional tests | Done | `42/42` passing, including `tests/test_bug_audit.py` |
-| FLS outcome fan-out | Done | `app/clients/feedback_client.py` |
-| Streaming/Kafka ingestion | Not done | REST only |
-| Production persistence | Not done | In-memory repositories |
-| Full RLS/SSO | Not done | Header-driven filters only |
+| Unit + functional tests | Done | `120/120` passing, including `tests/test_bug_audit.py` |
+| FLS outcome fan-out | Done | `app/clients/feedback_client.py` sends `deal.funded`/`deal.lost` with `X-Request-ID` |
+| Streaming/Kafka ingestion | Partial | `app/messaging/kafka_bus.py` producer/consumer for `crm.outreach.*`/`crm.outcome.*`; real broker, DW, and Flink streaming pipeline pending |
+| Production persistence (Postgres/DW/S3) | Done | `STORAGE_GATEWAY=postgres`, SQLAlchemy ORM, SQL repositories, Alembic migrations, `/ready` Postgres health check. DW/S3 export and `app/pdf.py` production sink still pending. |
+| Full RLS/SSO | Not done | Header-driven filters only; no tenant/branch SSO or row-level policy engine |
+| Scheduled email delivery | Not done | `ReportSchedule` entity exists; no cron or email mechanism |
 
 ### Task Automation Engine (TAS)
 
@@ -148,13 +159,18 @@ The repository is **ready for local development, integration testing, staged dem
 | Dry-run / canary / rollback | Done | `app/service.py`, `app/guards.py` |
 | LLM task agent with approval gate | Done | `app/agents/llm_task_agent.py` (stub) |
 | DLQ + replay | Done | `app/dlq.py` |
-| FUS fan-out client | Done | `app/clients/followup_client.py` |
-| Optional Kafka consumer group | Partial | `app/kafka_consumer_group.py` off by default |
-| Redis idempotency store | Partial | `app/persistence/redis_store.py` exists; defaults to memory |
-| Real CRM/calendar/feature-store integrations | Partial | HTTP clients in `app/integrations/crm.py`, `calendar.py`, `feature_store.py` with in-process stubs when unconfigured |
+| FUS fan-out client | Done | `app/clients/followup_client.py` sends `deal.stage_changed`/`lead.assigned` with `X-Request-ID` |
+| Kafka producer/consumer | Partial | `app/messaging/kafka_bus.py` and `app/kafka_consumer_group.py` code-complete; real broker and cross-agent fan-out pending |
+| Redis idempotency store | Partial | `app/persistence/redis_store.py` exists; `IDEMPOTENCY_BACKEND=redis` selectable; defaults to memory |
+| Postgres durable persistence | Done | `STORAGE_BACKEND=postgres` with inline schema; SQLite also supported |
+| Real CRM/calendar/feature-store integrations | Partial | HTTP clients in `app/integrations/crm.py`, `calendar.py`, `feature_store.py` with in-process stubs when unconfigured; OAuth P4 |
+| OpenAI-compatible LLM client | Done | `app/integrations/llm_client.py` with deterministic fallback |
+| Temporal durable workflows | Not done | Temporal client/worker code exists; `TEMPORAL_ENABLED=false` by default |
+| DLQ replay UI | Not done | Replay API `POST /api/v1/vision/dlq/{id}/replay` exists; admin UI P4 |
+| Load test | Not done | Target 15k events/s (p95 ≤ 3s) |
 | Bug-audit fixes: doc verification, trigger id, thread-safety | Done | `app/workflows/doc_request_chain.py:210-213`, `app/messaging/trigger_ingestor.py:55-57`, `app/pipeline.py:57-58`, `app/service.py:61-62,301-302`, `app/store.py`, `app/runs.py`, `app/ledger.py`, `app/events.py`, `app/persistence/memory_store.py`, `app/persistence/redis_store.py`, and 12+ other modules |
-| Unit + functional tests | Done | `78/78` passing (1 skipped), including `tests/test_bug_audit.py` |
-| Production auth / RBAC | Partial | X-API-Key + X-Role headers; no OAuth/SSO |
+| Unit + functional tests | Done | `135/135` passing (1 skipped), including `tests/test_bug_audit.py` |
+| Production auth / RBAC (SSO/tenant/branch) | Not done | X-API-Key + X-Role headers only; no OAuth/SSO, tenant/branch policy enforcement |
 
 ---
 
@@ -163,22 +179,22 @@ The repository is **ready for local development, integration testing, staged dem
 ### Local / CI
 
 - [x] `docker compose up --build` starts the gateway and all five agents.
-- [x] All engine test suites pass (CMS 109, FLS 25, FUS 50, PAS 35, TAS 72 + 1 skipped) and `ruff` lint is green.
+- [x] All engine test suites pass (CMS 179, FLS 92, FUS 121, PAS 120, TAS 135 + 1 skipped) and `ruff` lint is green.
 - [x] Gateway `/health` and `/agents` respond.
 - [x] Gateway `/ready` checks upstream agent health endpoints.
-- [x] Root integration tests cover auth, 404, 502, default-key rejection, and `X-Request-ID` generation/propagation.
+- [x] Root integration tests cover auth, 404, 502, default-key rejection, `X-Request-ID` generation/propagation, RLS header forwarding, and upstream ready ok/degraded.
 - [ ] End-to-end cross-agent tests through the gateway.
 - [ ] Full integration test suite with real Postgres/Redis/Kafka.
 
 ### Staging
 
-- [ ] Provision Postgres for CMS, FUS, PAS, TAS persistence.
+- [x] Provision Postgres and configure `STORAGE_GATEWAY=postgres` + `DATABASE_URL` for all agents; run `alembic upgrade head` per agent.
 - [ ] Provision Redis for hot caches (consent, frequency, idempotency).
-- [ ] Provision Kafka (or Redpanda) for event-driven flows.
+- [ ] Provision Kafka/Redpanda for event-driven flows and enable `KAFKA_PRODUCE`/`KAFKA_CONSUMER_ENABLED`.
 - [ ] Add Schema Registry / canonical event schemas.
 - [ ] Add auth middleware on every agent and the gateway.
-- [ ] Add `/ready` probes that verify DB and upstream dependency health.
-- [ ] Add Prometheus/Grafana metrics and OpenTelemetry tracing.
+- [ ] Add `/ready` probes that verify DB, Redis, Kafka, Temporal, and upstream dependency health.
+- [ ] Add Prometheus `/metrics` endpoints, Grafana dashboards, and OpenTelemetry tracing.
 - [ ] Configure `*_URL` env vars for cross-agent HTTP calls.
 
 ### Production
@@ -186,11 +202,11 @@ The repository is **ready for local development, integration testing, staged dem
 - [ ] Secrets manager for all API keys and database credentials.
 - [ ] S3 WORM bucket for 7-year audit retention.
 - [ ] Load tests verifying all NFRs.
-- [ ] Circuit breakers and retries on all third-party HTTP calls.
+- [x] Circuit breakers and retries on all third-party HTTP calls (cross-agent clients use `ResilientClient`; gateway records `cross_agent_calls_total`; third-party providers still need production-grade backoffs).
 - [ ] Non-root container users for all agents.
 - [ ] Restricted CORS origins.
 - [ ] TLS termination and network policies.
-- [ ] Automated DB migrations (Alembic).
+- [ ] Automated DB migrations (Alembic) for all agents that use Postgres; CMS has Alembic, TAS uses inline schema, FUS/PAS/FLS need migrations built.
 - [ ] SOC 2 evidence runbooks.
 
 ---
@@ -198,9 +214,9 @@ The repository is **ready for local development, integration testing, staged dem
 ## Immediate Blockers for Production
 
 1. **Authentication is a shared single key, not per-tenant/per-user RBAC** — all agents and the gateway now reject the default `change-me-dev-key` in non-local environments, but they still share one `X-API-Key` and have no OAuth2, tenant scopes, or row-level access control.
-2. **No production persistence** — most agents use in-memory stores by default; S3 WORM archive not wired.
-3. **No real Kafka cluster** — producer/consumer code exists but is not always enabled; exactly-once processing not wired.
-4. **No observability** — Prometheus/Grafana and OpenTelemetry services are defined in compose but the apps do not expose metrics/traces yet.
-5. **No secrets management** — default dev key and DB URLs in `.env` files.
-6. **Third-party and cross-agent integrations are optional** — FUS channel providers and TAS CRM/calendar/feature-store clients fall back to stubs when credentials/URLs are unset. Production credentials and real endpoint contracts are still required.
-7. **Readiness probes do not check real dependencies** (Postgres, Redis, Kafka, CRM, calendar).
+2. **No production persistence** — CMS and TAS support Postgres; FUS has a config stub; PAS and FLS are in-memory only; S3 WORM archive not wired.
+3. **No real Kafka cluster** — producer/consumer bus code is complete in all agents but not enabled by default; broker, Schema Registry, SASL/SSL, DLQ, and exactly-once processing not wired.
+4. **Observability is code-complete but not live** — the gateway and all agents expose `/metrics` (or `/api/v1/metrics`) and record `http_requests_total`, `http_request_duration_seconds`, `http_requests_in_flight`, Kafka counters, and `cross_agent_calls_total`. Production Prometheus scraping, Grafana dashboards, SLO recording rules, and OTel trace export remain unconfigured.
+5. **No secrets management** — default dev key and DB URLs in `.env` files; no vault integration.
+6. **Third-party and cross-agent integrations are optional** — FUS channel providers have single-provider retry, TAS CRM/calendar/feature-store clients, and cross-agent HTTP clients fall back to stubs/single attempts when credentials/URLs are unset. Production credentials, OAuth, retry/circuit-breakers, and real endpoint contracts are still required.
+7. **Readiness probes are code-complete but not live** — all agents now report `storage`, `postgres`, `redis`, and `kafka` checks in `/ready` (where applicable). Temporal, third-party CRM/calendar, and MLflow/DW checks are still absent.
