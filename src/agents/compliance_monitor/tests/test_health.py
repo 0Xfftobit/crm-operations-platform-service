@@ -21,6 +21,11 @@ def test_ready(client):
     assert body["app"] == "crequity-compliance-monitoring"
     assert body["storage"] == "memory"       # hermetic default
     assert body["uses_sql"] is False
+    checks = body["checks"]
+    assert checks["storage"]["status"] == "ok"
+    assert checks["postgres"]["status"] == "not_configured"
+    assert checks["redis"]["status"] == "not_configured"
+    assert checks["kafka"]["status"] == "not_configured"
 
 
 def test_openapi(client):
