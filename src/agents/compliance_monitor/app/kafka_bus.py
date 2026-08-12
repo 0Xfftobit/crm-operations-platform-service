@@ -33,6 +33,7 @@ from typing import Any
 
 import structlog
 
+from app.core import metrics
 from app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
@@ -125,6 +126,9 @@ def _store_in_memory(record: dict) -> dict:
         _memory_log.append(record)
     logger.info("kafka_produced_to_memory", topic=record["topic"], key=record["key"])
     _notify_memory_new()
+    metrics.KAFKA_PRODUCED_TOTAL.inc(
+        {"topic": record["topic"], "transport": record.get("transport", "memory")}, 1
+    )
     return record
 
 
@@ -198,6 +202,7 @@ async def produce(topic: str, payload: dict, *, key: str | None = None) -> dict 
         await producer.send_and_wait(topic, value, key=key_bytes)
         record["transport"] = "kafka"
         logger.info("kafka_produced", topic=topic, key=key)
+        metrics.KAFKA_PRODUCED_TOTAL.inc({"topic": topic, "transport": "kafka"}, 1)
         return record
     except Exception as exc:  # noqa: BLE001
         logger.warning("kafka_produce_failed", topic=topic, key=key, error=str(exc))
@@ -270,7 +275,7 @@ async def _consume_real(consumer: Any, stop: asyncio.Event, patterns: list[str])
                 for msg in messages:
                     if _topic_matches(msg.topic, patterns):
                         key = (msg.key or b"").decode("utf-8")
-                        _handle(msg.topic, msg.value, key)
+                        _handle(msg.topic, msg.value, key, transport="kafka")
     finally:
         with contextlib.suppress(Exception):
             await consumer.stop()
@@ -305,6 +310,7 @@ async def _consume_memory(stop: asyncio.Event, patterns: list[str]) -> None:
                 record["topic"],
                 json.dumps(record["payload"]).encode("utf-8"),
                 record.get("key", ""),
+                transport=record.get("transport", "memory"),
             )
         if stop.is_set():
             break
@@ -390,7 +396,12 @@ async def stop_consumer() -> None:
     _consumer_task = None
 
 
-def _handle(topic: str | bytes, raw: bytes | str = b"", key: str = "") -> None:
+def _handle(
+    topic: str | bytes,
+    raw: bytes | str = b"",
+    key: str = "",
+    transport: str = "memory",
+) -> None:
     """Dispatch one consumed message to ``service.record_activity``."""
     from app import service
     from app.domain.models import ActivityEvent
@@ -412,6 +423,7 @@ def _handle(topic: str | bytes, raw: bytes | str = b"", key: str = "") -> None:
     try:
         service.record_activity(ActivityEvent(**payload))
         logger.info("kafka_ingest_recorded", topic=topic, key=key)
+        metrics.KAFKA_CONSUMED_TOTAL.inc({"topic": topic, "transport": transport}, 1)
     except Exception as exc:  # noqa: BLE001 — a poison message must not kill the loop
         logger.warning("kafka_ingest_bad_message", topic=topic, error=str(exc))
         service.note_dead_letter()

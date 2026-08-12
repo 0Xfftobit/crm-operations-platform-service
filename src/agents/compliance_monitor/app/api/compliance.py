@@ -1,6 +1,7 @@
 """Compliance operations API — pre-send hook, consent, activity ingest, fairness, disclosures,
 explainability, alerts/cases, and the RAG dashboard.
 """
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,11 +11,14 @@ from app import events, service
 from app.api.deps import require_api_key
 from app.domain.models import (
     ActivityEvent,
+    Case,
     CompliancePolicy,
     Consent,
     DisparityResult,
+    Domain,
     PrecheckRequest,
     PrecheckResult,
+    Severity,
 )
 from app.repositories import (
     get_alert_repository,
@@ -155,6 +159,36 @@ def list_alerts() -> dict:
 @router.get("/cases", summary="List compliance cases")
 def list_cases() -> dict:
     return {"cases": [c.model_dump(mode="json") for c in get_case_repository().list()]}
+
+
+class CaseCreate(BaseModel):
+    rule_id: str
+    domain: Domain
+    severity: Severity
+    entity_id: str = ""
+    message: str = ""
+    evidence: dict = Field(default_factory=dict)
+
+
+@router.post("/cases", response_model=Case, summary="Manually open a compliance case")
+def create_case(req: CaseCreate, _: Annotated[None, Auth]) -> Case:
+    from app import casework
+    from app.core.config import get_settings
+
+    now = datetime.now(UTC)
+    settings = get_settings()
+    alert, case, _ = casework.raise_alert(
+        get_alert_repository(), get_case_repository(),
+        rule_id=req.rule_id, domain=req.domain, severity=req.severity,
+        entity_id=req.entity_id, message=req.message, evidence=req.evidence,
+        now=now, sla_hours=settings.case_sla_hours, force_case=True,
+    )
+    if alert is not None:
+        events.publish(events.EVENT_ALERT, alert.model_dump(mode="json"))
+    if case is not None:
+        events.publish(events.EVENT_CASE_OPENED, case.model_dump(mode="json"))
+        return case
+    raise HTTPException(status_code=409, detail="case could not be created")
 
 
 class CaseUpdate(BaseModel):

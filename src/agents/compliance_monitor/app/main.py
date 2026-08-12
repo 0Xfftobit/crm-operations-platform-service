@@ -7,17 +7,22 @@ audit trail, and the rule-change (two-step approval) + regulation-tracker router
 import asyncio
 import contextlib
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from app.api.audit import router as audit_router
 from app.api.compliance import router as compliance_router
 from app.api.health import router as health_router
+from app.api.metrics import router as metrics_router
 from app.api.rules import router as rules_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.metrics import MetricMiddleware
 
 logger = structlog.get_logger(__name__)
 
@@ -101,6 +106,21 @@ async def lifespan(app: FastAPI):
     logger.info("application_stopping", app_name=settings.app_name)
 
 
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Bind request_id to structlog contextvars and echo X-Request-ID on every response."""
+
+    async def dispatch(self, request, call_next):
+        request_id = request.headers.get("x-request-id") or uuid4().hex
+        bind_contextvars(request_id=request_id)
+        try:
+            response = await call_next(request)
+        finally:
+            clear_contextvars()
+        if "x-request-id" not in response.headers:
+            response.headers["x-request-id"] = request_id
+        return response
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(level=settings.log_level, json_logs=settings.log_json)
@@ -113,9 +133,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(MetricMiddleware)
+    app.add_middleware(RequestIDMiddleware)
 
-    # /api/v1/health + /api/v1/ready (matches the Docker/ECS health check path)
+    # /api/v1/health + /api/v1/ready + /api/v1/metrics
     app.include_router(health_router, prefix=settings.api_prefix)
+    app.include_router(metrics_router, prefix=settings.api_prefix)
     app.include_router(compliance_router, prefix=settings.api_prefix)
     app.include_router(audit_router, prefix=settings.api_prefix)
     app.include_router(rules_router, prefix=settings.api_prefix)

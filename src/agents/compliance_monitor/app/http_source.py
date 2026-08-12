@@ -10,6 +10,7 @@ import asyncio
 import httpx
 import structlog
 
+from app.clients import AuditClient
 from app.core.config import get_settings
 from app.domain.models import ActivityEvent
 
@@ -50,7 +51,12 @@ async def poll_loop(stop: asyncio.Event) -> None:
         return
     cursor = 0
     logger.info("http_source_started", url=settings.audit_source_url)
-    async with httpx.AsyncClient(timeout=settings.audit_source_timeout) as client:
+    client = AuditClient(
+        settings.audit_source_url,
+        timeout=settings.audit_source_timeout,
+        api_key=settings.api_key,
+    )
+    try:
         while not stop.is_set():
             try:
                 count, cursor = await poll_once(client, cursor)
@@ -59,3 +65,5 @@ async def poll_loop(stop: asyncio.Event) -> None:
             except Exception as exc:  # noqa: BLE001 — poll failure is retried next tick
                 logger.warning("http_source_poll_failed", error=str(exc))
             await asyncio.sleep(settings.http_poll_interval_s)
+    finally:
+        await client.aclose()
