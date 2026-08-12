@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 from app import store
 from app.agents.llm_task_agent import reset_llm_agent
+from app.core import metrics as core_metrics
+from app.core import resilience
 from app.core.config import get_settings
 from app.cron_triggers import reset_cron
 from app.dlq import reset_dlq
@@ -42,6 +44,8 @@ def _reset_state(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_events()
     reset_idempotency()
     reset_metrics()
+    core_metrics.reset_metrics()
+    resilience.reset_resilience()
     reset_dlq()
     reset_guards()
     reset_kafka()
@@ -64,6 +68,8 @@ def _reset_state(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_events()
     reset_idempotency()
     reset_metrics()
+    core_metrics.reset_metrics()
+    resilience.reset_resilience()
     reset_dlq()
     reset_guards()
     reset_kafka()

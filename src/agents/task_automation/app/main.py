@@ -20,7 +20,8 @@ from app.api.tasks import router as tasks_router
 from app.api.triggers import router as triggers_router
 from app.api.vision import router as vision_router
 from app.core.config import get_settings
-from app.core.logging import configure_logging
+from app.core.logging import RequestIDMiddleware, configure_logging
+from app.core.metrics import MetricMiddleware
 from app.messaging.kafka_bus import start_producer, stop_producer
 from app.pipeline import init_pipeline
 from app.scheduler import start_scheduler, stop_scheduler
@@ -84,6 +85,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(MetricMiddleware)
 
     prefix = settings.api_prefix
     app.include_router(health_router, prefix=prefix)

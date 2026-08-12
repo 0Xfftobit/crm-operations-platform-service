@@ -6,6 +6,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
+from app.core import metrics as core_metrics
 from app.core.config import get_settings
 from app.service import process_event
 
@@ -55,6 +56,7 @@ def consume_kafka_message(
     finally:
         with _lock:
             _consumed.append(record)
+            core_metrics.inc_kafka_consumed(topic=topic)
     return record
 
 

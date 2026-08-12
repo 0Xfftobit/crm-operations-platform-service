@@ -9,6 +9,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
+from app.core import metrics as core_metrics
 from app.core.config import get_settings
 
 # Consumed topics (architecture §6)
@@ -191,10 +192,14 @@ async def produce(
     if settings.kafka_produce and _real_producer is not None:
         try:
             await asyncio.to_thread(_send_sync, _real_producer, canonical, pk, payload)
-            return _append_log(canonical, payload, key=pk, transport="kafka")
+            log = _append_log(canonical, payload, key=pk, transport="kafka")
+            core_metrics.inc_kafka_produced(topic=canonical, transport="kafka")
+            return log
         except Exception as exc:
             logger.warning("kafka_produce_failed", extra={"topic": canonical, "error": str(exc)})
-    return _append_log(canonical, payload, key=pk, transport="in_process_bus")
+    log = _append_log(canonical, payload, key=pk, transport="in_process_bus")
+    core_metrics.inc_kafka_produced(topic=canonical, transport="in_process_bus")
+    return log
 
 
 def produce_sync(
@@ -210,10 +215,14 @@ def produce_sync(
     if settings.kafka_produce and _real_producer is not None:
         try:
             _send_sync(_real_producer, canonical, pk, payload)
-            return _append_log(canonical, payload, key=pk, transport="kafka")
+            log = _append_log(canonical, payload, key=pk, transport="kafka")
+            core_metrics.inc_kafka_produced(topic=canonical, transport="kafka")
+            return log
         except Exception as exc:
             logger.warning("kafka_produce_sync_failed", extra={"topic": canonical, "error": str(exc)})
-    return _append_log(canonical, payload, key=pk, transport="in_process_bus")
+    log = _append_log(canonical, payload, key=pk, transport="in_process_bus")
+    core_metrics.inc_kafka_produced(topic=canonical, transport="in_process_bus")
+    return log
 
 
 def publish_kafka(

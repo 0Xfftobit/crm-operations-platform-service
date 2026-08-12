@@ -8,6 +8,7 @@ import threading
 from threading import RLock
 from typing import Any
 
+from app.core import metrics as core_metrics
 from app.core.config import get_settings
 from app.messaging import kafka_bus
 from app.service import process_event
@@ -53,6 +54,7 @@ def _process_record(topic: str, payload: dict[str, Any], *, offset: int, partiti
         trigger_id=trigger_id,
         source="kafka",
     )
+    core_metrics.inc_kafka_consumed(topic=topic)
     with _lock:
         _stats["messages_processed"] += 1
 
