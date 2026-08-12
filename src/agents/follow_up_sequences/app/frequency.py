@@ -190,8 +190,8 @@ def redis_health() -> dict[str, str]:
     """Best-effort Redis connectivity check for /ready probes."""
     settings = get_settings()
     if not settings.uses_cache:
-        return {"status": "disabled"}
-    return {"status": "ok"} if _redis_client() is not None else {"status": "unavailable"}
+        return {"status": "not_configured"}
+    return {"status": "ok"} if _redis_client() is not None else {"status": "degraded"}
 
 
 _store: FrequencyStore | None = None

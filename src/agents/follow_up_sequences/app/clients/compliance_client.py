@@ -2,17 +2,15 @@
 
 Used by the Follow-up Sequences Engine to centralise compliance checks before any
 real outbound send. If the Compliance Monitor is unavailable the client returns
-`None` and the engine falls back to its local guardrails.
+``None`` and the engine falls back to its local guardrails.
 """
 from __future__ import annotations
 
 import logging
 from datetime import datetime
-from uuid import uuid4
-
-import httpx
 
 from app.core.config import Settings
+from app.core.resilience import CircuitBreakerOpen, ResilientClient
 from app.domain.models import Contact
 
 logger = logging.getLogger(__name__)
@@ -33,8 +31,8 @@ def precheck(
 ) -> dict | None:
     """Call the Compliance Monitor ``POST /api/v1/precheck`` and return the JSON result.
 
-    Returns ``None`` when the client is disabled or the call fails, allowing the
-    engine to fall back to local guardrails.
+    Returns ``None`` when the client is disabled, the circuit breaker is open, or
+    the call fails, allowing the engine to fall back to local guardrails.
     """
     if not settings.precheck_enabled or not settings.compliance_monitor_url:
         return None
@@ -49,17 +47,20 @@ def precheck(
         "scheduled_for": scheduled_for.isoformat(),
     }
 
-    headers = {"Content-Type": "application/json", "X-Request-ID": uuid4().hex}
+    headers = {"Content-Type": "application/json"}
     if settings.compliance_api_key:
         headers["X-API-Key"] = settings.compliance_api_key
     elif settings.api_key:
         headers["X-API-Key"] = settings.api_key
 
     try:
-        with httpx.Client(timeout=settings.precheck_timeout) as client:
-            response = client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            return response.json()
+        client = ResilientClient(client="compliance", timeout=settings.precheck_timeout)
+        response = client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except CircuitBreakerOpen:
+        logger.warning("compliance_precheck_circuit_open: url=%s", url)
+        return None
     except Exception as exc:  # noqa: BLE001
-        logger.warning("compliance_precheck_failed", error=str(exc), url=url)
+        logger.warning("compliance_precheck_failed: %s", exc)
         return None

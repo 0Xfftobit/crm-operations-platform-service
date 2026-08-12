@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import structlog
 
+from app.core import metrics
 from app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
@@ -83,6 +84,21 @@ def bus_stats() -> dict[str, Any]:
             "topics": topics,
             "transport": transport,
         }
+
+
+def is_healthy() -> bool:
+    """Return True when the configured Kafka transport is ready."""
+    settings = get_settings()
+    with _lock:
+        if settings.kafka_produce and _producer is not None:
+            return True
+        if (
+            settings.kafka_consumer_enabled
+            and _consumer_task is not None
+            and not _consumer_task.done()
+        ):
+            return True
+    return False
 
 
 def _append_log(
@@ -158,6 +174,8 @@ async def produce(
     canonical = canonical_topic(topic)
     pk = key or partition_key(payload)
 
+    metrics.KAFKA_PRODUCED_TOTAL.labels(topic=canonical).inc()
+
     if not settings.kafka_produce:
         return _append_log(canonical, payload, pk, "in_process_bus")
 
@@ -195,6 +213,8 @@ def produce_sync(
     canonical = canonical_topic(topic)
     pk = key or partition_key(payload)
 
+    metrics.KAFKA_PRODUCED_TOTAL.labels(topic=canonical).inc()
+
     if not settings.kafka_produce:
         return _append_log(canonical, payload, pk, "in_process_bus")
 
@@ -224,6 +244,8 @@ async def _handle(record: dict[str, Any]) -> None:
     topic = record.get("topic", "")
     payload = record.get("payload", {})
     short = short_topic(topic)
+
+    metrics.KAFKA_CONSUMED_TOTAL.labels(topic=topic).inc()
 
     try:
         if short == "deal.stage_changed":

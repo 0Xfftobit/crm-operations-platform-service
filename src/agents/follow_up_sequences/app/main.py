@@ -16,6 +16,8 @@ from app.api.health import router as health_router
 from app.api.sequences import router as sequences_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.metrics import MetricMiddleware
+from app.core.middleware import RequestIDMiddleware
 from app.messaging import kafka_bus
 
 logger = structlog.get_logger(__name__)
@@ -29,6 +31,10 @@ async def lifespan(app: FastAPI):
         storage=settings.storage_gateway, cache=settings.cache_gateway,
         event_source=settings.event_source_gateway,
     )
+    # Durable schema on startup (dev convenience; prod runs ``alembic upgrade head``).
+    if settings.uses_sql and settings.db_auto_create:
+        from app.db import engine
+        engine.create_all()
     await kafka_bus.start_producer()
     consumer = await kafka_bus.start_consumer() if settings.kafka_consumer_enabled else None
     logger.info("kafka_ready", consumer=consumer)
@@ -43,6 +49,8 @@ def create_app() -> FastAPI:
     configure_logging(level=settings.log_level, json_logs=settings.log_json)
 
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+    app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(MetricMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
