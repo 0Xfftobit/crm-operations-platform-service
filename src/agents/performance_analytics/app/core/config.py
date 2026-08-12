@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     )
 
     storage_backend: str = Field("memory", alias="STORAGE_BACKEND")
+    storage_gateway: str = Field("memory", alias="STORAGE_GATEWAY")
+    database_url: str = Field("", alias="DATABASE_URL")
+    db_auto_create: bool = Field(False, alias="DB_AUTO_CREATE")
     data_dir: str = Field("./data/performance_analytics", alias="DATA_DIR")
 
     # Attribution / windowing
@@ -95,6 +98,11 @@ class Settings(BaseSettings):
                 return json.loads(s)
             return [x.strip() for x in s.split(",") if x.strip()]
         return v
+
+    @property
+    def uses_sql(self) -> bool:
+        """True when a durable SQL backend is configured."""
+        return self.storage_gateway == "postgres" and bool(self.database_url)
 
     @property
     def data_path(self) -> Path:

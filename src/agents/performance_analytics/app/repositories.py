@@ -11,6 +11,7 @@ from functools import wraps
 from threading import RLock
 from typing import Any, List
 
+from app.core.config import get_settings
 from app.domain.models import (
     AlertRecord,
     AttributionRecord,
@@ -365,52 +366,64 @@ _experiments = ExperimentResultRepository()
 _events = EventLogRepository()
 
 
+def _sql():
+    from app.db import sql_repositories as sr
+    return sr
+
+
+def _uses_sql() -> bool:
+    try:
+        return get_settings().uses_sql
+    except Exception:  # noqa: BLE001 — callers may run with temporarily invalid env
+        return False
+
+
 def get_touch_repository() -> TouchRepository:
-    return _touches
+    return _sql().SqlTouchRepository() if _uses_sql() else _touches
 
 
 def get_outcome_repository() -> OutcomeRepository:
-    return _outcomes
+    return _sql().SqlOutcomeRepository() if _uses_sql() else _outcomes
 
 
 def get_campaign_cost_repository() -> CampaignCostRepository:
-    return _campaign_costs
+    return _sql().SqlCampaignCostRepository() if _uses_sql() else _campaign_costs
 
 
 def get_finance_repository() -> FinanceSourceRepository:
-    return _finance
+    return _sql().SqlFinanceSourceRepository() if _uses_sql() else _finance
 
 
 def get_metric_repository() -> MetricDefinitionRepository:
-    return _metrics
+    return _sql().SqlMetricDefinitionRepository() if _uses_sql() else _metrics
 
 
 def get_attribution_repository() -> AttributionRepository:
-    return _attributions
+    return _sql().SqlAttributionRepository() if _uses_sql() else _attributions
 
 
 def get_report_repository() -> ReportScheduleRepository:
-    return _reports
+    return _sql().SqlReportScheduleRepository() if _uses_sql() else _reports
 
 
 def get_reconciliation_repository() -> ReconciliationRepository:
-    return _reconciliations
+    return _sql().SqlReconciliationRepository() if _uses_sql() else _reconciliations
 
 
 def get_alert_repository() -> AlertRepository:
-    return _alerts
+    return _sql().SqlAlertRepository() if _uses_sql() else _alerts
 
 
 def get_snapshot_repository() -> KpiSnapshotRepository:
-    return _snapshots
+    return _sql().SqlKpiSnapshotRepository() if _uses_sql() else _snapshots
 
 
 def get_experiment_repository() -> ExperimentResultRepository:
-    return _experiments
+    return _sql().SqlExperimentResultRepository() if _uses_sql() else _experiments
 
 
 def get_event_log_repository() -> EventLogRepository:
-    return _events
+    return _sql().SqlEventLogRepository() if _uses_sql() else _events
 
 
 def reset_repositories() -> None:
@@ -426,3 +439,16 @@ def reset_repositories() -> None:
     _snapshots.clear()
     _experiments.clear()
     _events.clear()
+    if _uses_sql():
+        _sql().SqlTouchRepository().clear()
+        _sql().SqlOutcomeRepository().clear()
+        _sql().SqlCampaignCostRepository().clear()
+        _sql().SqlFinanceSourceRepository().clear()
+        _sql().SqlMetricDefinitionRepository().clear()
+        _sql().SqlAttributionRepository().clear()
+        _sql().SqlReportScheduleRepository().clear()
+        _sql().SqlReconciliationRepository().clear()
+        _sql().SqlAlertRepository().clear()
+        _sql().SqlKpiSnapshotRepository().clear()
+        _sql().SqlExperimentResultRepository().clear()
+        _sql().SqlEventLogRepository().clear()
