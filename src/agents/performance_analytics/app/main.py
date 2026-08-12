@@ -10,6 +10,8 @@ from app.api.analytics import router as analytics_router
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.metrics import MetricMiddleware
+from app.core.middleware import RequestIDMiddleware
 from app.messaging import kafka_bus
 from app.service import seed
 
@@ -24,7 +26,13 @@ async def lifespan(app: FastAPI):
         app_name=settings.app_name,
         env=settings.env,
         storage=settings.storage_backend,
+        storage_gateway=settings.storage_gateway,
+        uses_sql=settings.uses_sql,
     )
+    if settings.uses_sql and settings.db_auto_create:
+        from app.db.engine import create_all
+
+        create_all()
     seed()
     await kafka_bus.start_producer()
     consumer = await kafka_bus.start_consumer() if settings.kafka_consumer_enabled else None
@@ -52,6 +60,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(MetricMiddleware)
 
     prefix = settings.api_prefix
     app.include_router(health_router, prefix=prefix)

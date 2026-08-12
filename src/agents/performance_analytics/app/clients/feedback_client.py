@@ -9,12 +9,24 @@ from __future__ import annotations
 import logging
 from uuid import uuid4
 
-import httpx
+import structlog
 
 from app.core.config import Settings
+from app.core.resilience import CircuitOpenError, ResilientClient
 from app.domain.models import OutcomeEvent
 
 logger = logging.getLogger(__name__)
+
+_FEEDBACK_CLIENT = ResilientClient(
+    client_name="feedback_loop",
+    max_retries=3,
+    base_delay=0.2,
+)
+
+
+def reset_resilient_client() -> None:
+    """Reset the cross-agent client and its circuit breaker (used by tests)."""
+    _FEEDBACK_CLIENT.reset()
 
 
 def fanout_outcome(outcome: OutcomeEvent, *, settings: Settings) -> dict | None:
@@ -35,16 +47,27 @@ def fanout_outcome(outcome: OutcomeEvent, *, settings: Settings) -> dict | None:
         "occurred_at": outcome.occurred_at.isoformat(),
         "prediction_id": None,
     }
-    headers = {"Content-Type": "application/json", "X-Request-ID": uuid4().hex}
+
+    request_id = structlog.contextvars.get_contextvars().get("request_id") or uuid4().hex
+    headers = {"Content-Type": "application/json", "X-Request-ID": request_id}
     api_key = settings.feedback_loop_api_key or settings.api_key
     if api_key:
         headers["X-API-Key"] = api_key
 
     try:
-        with httpx.Client(timeout=settings.feedback_loop_timeout) as client:
-            response = client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            return response.json()
+        result = _FEEDBACK_CLIENT.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=settings.feedback_loop_timeout,
+        )
+        return result
+    except CircuitOpenError:
+        logger.warning(
+            "feedback_loop_fanout_failed: circuit open for url=%s",
+            url,
+        )
+        return None
     except Exception as exc:  # noqa: BLE001
         logger.warning("feedback_loop_fanout_failed: %s (url=%s)", str(exc), url)
         return None

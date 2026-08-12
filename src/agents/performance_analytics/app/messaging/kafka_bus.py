@@ -25,6 +25,7 @@ from uuid import uuid4
 
 import structlog
 
+from app.core import metrics as _metrics
 from app.core.config import get_settings
 from app.domain.models import OutcomeEvent, TouchEvent
 
@@ -122,6 +123,7 @@ def _append_to_memory(canonical: str, payload: dict[str, Any], key: str) -> dict
     }
     with _lock:
         _in_memory_log.append(row)
+    _metrics.kafka_produced_total.inc({"topic": canonical})
     return row
 
 
@@ -290,6 +292,7 @@ def _dispatch(raw: bytes | str | dict[str, Any], topic: str | None = None) -> No
             service.ingest_outcome(OutcomeEvent(**payload))
         else:
             logger.warning("kafka_unrouted_message", topic=canonical)
+        _metrics.kafka_consumed_total.inc({"topic": canonical})
     except Exception as exc:  # noqa: BLE001
         logger.warning("kafka_dead_letter", topic=topic, error=str(exc))
     finally:
