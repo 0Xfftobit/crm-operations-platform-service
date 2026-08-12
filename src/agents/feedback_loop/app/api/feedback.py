@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
+from starlette.responses import PlainTextResponse
 
 from app import service
 from app.api.deps import require_api_key
+from app.core.metrics import generate_metrics
 from app.domain.models import Feedback, Outcome, Prediction
 
 router = APIRouter(tags=["feedback-loop"])
@@ -54,8 +56,10 @@ def get_metrics(
     return service.get_metrics(engine_name, window_days=window_days)
 
 
-@router.get("/metrics", summary="Metrics for all engines")
-def get_all_metrics() -> dict[str, dict[str, Any]]:
+@router.get("/metrics", summary="Metrics for all engines or Prometheus exposition")
+def get_all_metrics(accept: Annotated[str | None, Header(alias="Accept")] = None) -> Any:
+    if accept and "text/plain" in accept:
+        return PlainTextResponse(generate_metrics(), media_type="text/plain; version=0.0.4; charset=utf-8")
     return service.get_all_metrics()
 
 

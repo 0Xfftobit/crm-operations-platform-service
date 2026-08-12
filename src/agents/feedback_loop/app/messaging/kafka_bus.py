@@ -24,6 +24,7 @@ from uuid import uuid4
 import structlog
 
 from app.core.config import get_settings
+from app.core.metrics import KAFKA_CONSUMED_TOTAL, KAFKA_PRODUCED_TOTAL
 
 logger = structlog.get_logger(__name__)
 
@@ -89,6 +90,7 @@ def _record_message(canonical: str, payload: dict[str, Any], key: str, transport
     }
     with _lock:
         _kafka_log.append(row)
+    KAFKA_PRODUCED_TOTAL.inc({"topic": canonical})
     return row
 
 
@@ -199,6 +201,7 @@ def _dispatch(topic: str, payload: Any) -> None:
     from app import service
     from app.domain.models import Outcome
 
+    KAFKA_CONSUMED_TOTAL.inc({"topic": topic})
     short = short_topic(topic)
     try:
         data = dict(payload) if isinstance(payload, dict) else {}
@@ -356,6 +359,16 @@ def bus_stats() -> dict[str, Any]:
             "consumer_lag": lag,
             "topics": topics,
             "dead_letters": len(_dead_letter),
+            "transport": "kafka" if _producer is not None else "in_process_bus",
+        }
+
+
+def is_ready() -> dict[str, Any]:
+    """Return a readiness snapshot for the Kafka bus (used by /ready)."""
+    with _lock:
+        return {
+            "producer_ready": _producer is not None,
+            "consumer_ready": _consumer_task is not None and not _consumer_task.done(),
             "transport": "kafka" if _producer is not None else "in_process_bus",
         }
 
