@@ -17,6 +17,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Prometheus metrics endpoint (`/api/v1/metrics`) — optional, degrades to in-memory.
+metrics = ["prometheus-client>=0.21"]
 # Redis hot-cache tier (CACHE_GATEWAY=redis) — optional, lazily imported.
 redis = ["redis>=5.0"]
 # Kafka bus (KAFKA_PRODUCE / KAFKA_INGEST) — async producer + consumer, lazily imported.
@@ -36,6 +38,7 @@ otel = [
 dev = [
     "pytest>=8.3.0",
     "ruff>=0.8.0",
+    "prometheus-client>=0.21",
     "fakeredis>=2.20",
     "aiokafka>=0.11",
     "boto3>=1.34",
