@@ -17,18 +17,37 @@ This document consolidates the current implementation status of the CRM Operatio
   - TAS has a configurable OpenAI-compatible LLM client with deterministic fallback.
 - **All test suites pass** (after the latest Kafka integration round):
 
-  | Suite | Tests |
-  |-------|-------|
-  | Root gateway | 9 passed |
-  | Compliance Monitor | 152 passed |
-  | Feedback Loop | 63 passed |
-  | Follow-up Sequences | 96 passed |
-  | Performance Analytics | 91 passed |
-  | Task Automation | 129 passed, 1 skipped |
+  | Suite | Modules | Tests | Notes |
+  |-------|---------|-------|-------|
+  | Root gateway | 3 | 16 passed | `test_gateway`, `test_gateway_cross_agent`, `test_metrics` |
+  | Compliance Monitor (CMS) | 23 | 179 passed | Full matrix in `docs/test_matrix.md` |
+  | Feedback Loop (FLS) | 10 | 92 passed | Full matrix in `docs/test_matrix.md` |
+  | Follow-up Sequences (FUS) | 14 | 121 passed | Full matrix in `docs/test_matrix.md` |
+  | Performance Analytics (PAS) | 11 | 120 passed | Full matrix in `docs/test_matrix.md` |
+  | Task Automation (TAS) | 21 | 135 passed, 1 skipped | Full matrix in `docs/test_matrix.md` |
+  | **Grand total** | **82** | **663** | `docs/testing.md` and `docs/ENGINE_TESTING_RESULTS.md` also contain the full matrix.
 
 - **Kafka baseline integration is complete** across all five agents (producers, consumers, per-deal partition keys, graceful in-memory fallback, and contract tests).
 
 - **Linting is clean**: `ruff check` passes at the root and for every agent.
+
+### Resilience & observability (current state)
+
+- **Health and readiness probes** exist on the gateway and every agent. The gateway probes upstream `/ready` first, then falls back to `/health` (`src/api/main.py`). Every agent's `/ready` now reports per-dependency checks for `storage`, `postgres`, `redis`, and `kafka` with `ok`/`degraded`/`not_configured` status.
+- **Request-ID propagation** is wired end-to-end: the gateway generates/propagates `X-Request-ID` (`src/api/main.py:130-179`) and all cross-agent clients send it.
+- **Retry and circuit-breaker policies** are now implemented across all agents: `app/core/resilience.py` provides `ResilientClient` (up to 3 attempts, exponential backoff, propagates `X-Request-ID` and `X-API-Key`) and `CircuitBreaker` (open after 3 consecutive failures, 30s timeout, half-open probe). Cross-agent clients (FUS→CMS, PAS→FLS, TAS→FUS) now use it; third-party provider retry remains FUS-specific.
+- **Prometheus/Grafana/OpenTelemetry infrastructure** is provisioned in `docker-compose.yml --profile infra` (Prometheus, Grafana, OTel Collector). **The gateway and every agent now expose `/metrics` (gateway) or `/api/v1/metrics` (agents)** and record `http_requests_total`, `http_request_duration_seconds`, `http_requests_in_flight`, `kafka_produced_total`, `kafka_consumed_total`, and `cross_agent_calls_total` using a Prometheus-compatible in-memory fallback. **Grafana dashboards and OpenTelemetry trace export remain P4 work.**
+- **Load testing** is not implemented (no 15k/s or 2k msg/s test harnesses).
+
+### PostgreSQL persistence (current state)
+
+| Agent | Postgres status | Notes |
+|-------|-----------------|-------|
+| **CMS** | ✅ Implemented | `STORAGE_GATEWAY=postgres`, SQLAlchemy ORM, SQL repositories, Alembic migrations, `/ready` health check (`app/db/engine.py:50-60`). |
+| **TAS** | ✅ Implemented | `STORAGE_BACKEND=postgres` or `sqlite`, inline schema/migration logic, health check (`app/persistence/db.py:592-603`). |
+| **FUS** | ✅ Implemented | `STORAGE_GATEWAY=postgres` SQLAlchemy ORM, SQL repositories, Alembic migrations, `/ready` Postgres health check (`app/db/engine.py`); default is `memory`. |
+| **PAS** | ✅ Implemented | `STORAGE_GATEWAY=postgres`, SQLAlchemy ORM, SQL repositories, Alembic migrations, `/ready` Postgres health check (`app/db/engine.py`); default is `memory`. |
+| **FLS** | ✅ Implemented | `STORAGE_GATEWAY=postgres`, SQLAlchemy ORM, SQL repositories, Alembic migrations, `/ready` Postgres health check (`app/db/engine.py`); default is `memory`. |
 
 ## Kafka Integration
 
@@ -42,12 +61,28 @@ A cross-agent Kafka contract is now in place (see `.devin/kafka_contract.md`):
 | **Feedback Loop** | `aiokafka` | `crm.model.retrained`, `crm.champion.promoted` | `crm.outcome.funded`, `crm.outcome.lost`, `crm.outreach.converted` | `app/messaging/kafka_bus.py`, `app/model_retrainer.py` |
 | **Compliance Monitor** | `aiokafka` | `compliance.alert`, `compliance.case.opened`, `compliance.signal` | `compliance-audit`, `crm.*` | `app/kafka_bus.py`, `app/events.py` |
 
+**Code-complete baseline:**
+- Canonical/short topic helpers in every agent.
+- Per-deal/lead/contact partition-keyed ordering.
+- Producer/consumer lifecycle management and graceful in-memory fallback.
+- Broker-free contract tests in every agent.
+
 The bus degrades to an in-memory log when:
 - `KAFKA_PRODUCE=false` / `KAFKA_CONSUMER_ENABLED=false`
 - the Kafka library is not installed
 - the broker is unreachable
 
 This keeps local tests and CI fast while allowing the same code to run against a real Redpanda/Kafka cluster in production.
+
+**Remaining Kafka production work:**
+- Real broker integration tests using `docker compose --profile infra` (Redpanda is provided but not exercised in CI).
+- End-to-end cross-agent fan-out validation (e.g., TAS produces `crm.lead.scored` → FUS consumes and enrolls; PAS produces `crm.outcome.funded` → FLS consumes as a training label).
+- Schema Registry integration (Redpanda SR runs on `8081`; no client code registers or validates schemas).
+- SASL/SSL security config and topic ACLs.
+- Standardized dead-letter queue topics and replay semantics.
+- Manual offset commit / exactly-once semantics.
+- Prometheus metrics for consumer lag and producer throughput.
+- Kafka connectivity health check in `/ready` probes.
 
 The repository is ready for **local development, staged demos, and CI**. It is **not yet ready for production deployment** without the infrastructure and credentials listed below.
 
@@ -59,24 +94,24 @@ Percentages are estimates based on the status rows in the updated `docs/implemen
 
 | Agent | ✅ | 🚧 | 📝 | ❌ | Total rows | Estimated % |
 |-------|----|----|----|----|-----------:|------------:|
-| **Task Automation** | 79 | 16 | 8 | 1 | 104 | **84%** |
-| **Compliance Monitor** | 119 | 25 | 16 | 1 | 161 | **82%** |
-| **Follow-up Sequences** | 82 | 32 | 9 | 1 | 124 | **79%** |
-| **Performance Analytics** | 93 | 13 | 25 | 1 | 132 | **75%** |
-| **Feedback Loop** | 89 | 35 | 23 | 1 | 148 | **72%** |
+| **Task Automation** | 86 | 12 | 7 | 1 | 106 | **87%** |
+| **Compliance Monitor** | 127 | 34 | 12 | 1 | 174 | **83%** |
+| **Follow-up Sequences** | 91 | 28 | 9 | 1 | 129 | **81%** |
+| **Performance Analytics** | 102 | 18 | 16 | 1 | 137 | **81%** |
+| **Feedback Loop** | 93 | 37 | 21 | 1 | 152 | **73%** |
 | **API Gateway** | — | — | — | — | — | **~80%** (inferred from P4 blockers) |
 
 ### What the remaining percentage represents
 
-The remaining 15–30% is almost entirely P4 hardening and production wiring:
+The remaining 13–28% is almost entirely P4 hardening and production wiring:
 
-- **Persistence**: Postgres/S3 instead of in-memory stores.
+- **Persistence**: SQLAlchemy/SQLite/Postgres persistence is code-complete and smoke-tested; the remaining work is live Postgres/S3 in staging/production, backup/restore, and migration runbooks.
 - **Shared state**: real Redis instead of in-process caches.
 - **Streaming**: Kafka/Redpanda is wired (producers, consumers, per-deal partition keys); still need a live broker and end-to-end fan-out validation.
 - **External credentials**: Twilio, SendGrid, WhatsApp, CRM, calendar, feature store, data warehouse, MLflow, LLM provider.
 - **Durable workflows**: Temporal cluster for Task Automation and Follow-up Sequences.
 - **Auth / RBAC**: OAuth/JWT, tenant/branch isolation, vault-managed secrets.
-- **Observability**: OpenTelemetry, Prometheus/Grafana, load testing.
+- **Observability**: OpenTelemetry trace export, Prometheus/Grafana dashboards, load testing.
 - **Deployment**: Kubernetes, runbooks, SOC 2 evidence.
 
 In short, the code is feature-complete for local dev and staged demos; the remaining work is infrastructure, credentials, and production hardening.
@@ -112,12 +147,12 @@ Do this first to get a representative production-like stack on your laptop.
 
 Switch each engine from in-memory to durable backends.
 
-- **Postgres**:
-  - CMS: `STORAGE_GATEWAY=postgres`, `DATABASE_URL=postgresql+psycopg://...`
-  - FUS: `STORAGE_GATEWAY=postgres`
-  - TAS: `STORAGE_BACKEND=postgres`
-  - FLS: `STORAGE_BACKEND=disk` (or Postgres if you wire it)
-  - PAS: currently in-memory only — add a Postgres/S3 adapter.
+- **Postgres per agent**:
+  - CMS: `STORAGE_GATEWAY=postgres`, `DATABASE_URL=postgresql+psycopg://...` — run `alembic upgrade head` (migrations exist).
+  - TAS: `STORAGE_BACKEND=postgres`, `DATABASE_URL=postgresql://...` — schema is created inline on first connection.
+  - FUS: `STORAGE_GATEWAY=postgres`, `DATABASE_URL=postgresql+psycopg://...` — run `alembic upgrade head` (migrations exist).
+  - PAS: `STORAGE_GATEWAY=postgres`, `DATABASE_URL=postgresql+psycopg://...` — run `alembic upgrade head` (migrations exist).
+  - FLS: `STORAGE_GATEWAY=postgres`, `DATABASE_URL=postgresql+psycopg://...` — run `alembic upgrade head` (migrations exist).
 - Run Alembic migrations for each agent that has them.
 - **Redis** hot caches:
   - CMS: `CACHE_GATEWAY=redis`
@@ -127,13 +162,12 @@ Switch each engine from in-memory to durable backends.
 ### 3. Eventing and durable workflows
 
 - **Kafka / Redpanda** (baseline is now in code; enable with a live broker):
-  - Set `KAFKA_BOOTSTRAP_SERVERS` in each agent.
-  - CMS: `KAFKA_PRODUCE=true`, `KAFKA_CONSUMER_ENABLED=true` (or `KAFKA_INGEST=true`)
-  - TAS: `KAFKA_CONSUMER_ENABLED=true`
-  - FUS: `KAFKA_CONSUMER_ENABLED=true`
-  - PAS: `KAFKA_CONSUMER_ENABLED=true`
-  - FLS: `KAFKA_CONSUMER_ENABLED=true`
-  - Validate per-deal ordering and end-to-end fan-out.
+  - Set `KAFKA_BOOTSTRAP_SERVERS` in each agent (Redpanda is provided by `docker compose --profile infra`).
+  - Enable producers/consumers per agent: CMS `KAFKA_PRODUCE=true` / `KAFKA_CONSUMER_ENABLED=true` (or `KAFKA_INGEST=true`); TAS, FUS, PAS, and FLS `KAFKA_PRODUCE=true` / `KAFKA_CONSUMER_ENABLED=true`.
+  - Add CI integration tests with a live broker to validate serialization, per-deal ordering, and cross-agent fan-out.
+  - Wire Redpanda Schema Registry (`8081`) for topic schema validation.
+  - Add SASL/SSL config and topic ACLs for production clusters.
+  - Standardize dead-letter queue topics and replay semantics.
 - **Temporal**:
   - TAS: `TEMPORAL_ENABLED=true`, start `scripts/temporal_worker.py`.
   - FUS: wire `app/scheduler.py` to Temporal durable timers.
@@ -159,10 +193,20 @@ Fill in the per-agent `.env` files with actual credentials.
 
 ### 6. Resilience and observability
 
-- Add retry + circuit-breaker to cross-agent and external HTTP clients.
-- Add Prometheus metrics endpoints and Grafana dashboards.
-- Enable OpenTelemetry tracing (`TRACING_ENABLED=true`, `OTEL_ENABLED=true`).
-- Run the 15k/s load test and tune.
+- **Resilience:**
+  - Add retry and circuit-breaker to cross-agent HTTP clients (FUS→CMS, PAS→FLS, TAS→FUS) and third-party calls (Twilio, SendGrid, CRM, calendar).
+  - Add bulkhead/isolation between different upstream services.
+- **Metrics:**
+  - Expose Prometheus `/metrics` endpoints in every agent (Prometheus/Grafana containers are already provisioned in `docker compose --profile infra`).
+  - Add SLO recording rules and burn-rate alerting.
+- **Tracing:**
+  - Enable OpenTelemetry tracing in all agents (CMS has a stub; FUS/TAS have config fields; PAS/FLS need implementation).
+  - Propagate trace context across cross-agent HTTP and Kafka flows.
+- **Load testing:**
+  - Build and run the 15k/s platform load test (p95 ≤ 3s).
+  - Build and run the FUS 2,000 msg/s load test.
+- **Probes:**
+  - Add Kafka, Temporal, and third-party service health checks to agent `/ready` probes.
 
 ### 7. Deployment and operations
 
@@ -174,11 +218,11 @@ Fill in the per-agent `.env` files with actual credentials.
 
 | Agent | Features still to implement |
 |-------|-----------------------------|
-| **FLS** | MLflow registry, shadow/canary deployment, propensity weighting, model cards, right-to-erasure. |
-| **FUS** | Multi-provider failover, Temporal durable scheduling, load test to 2k msg/s. |
-| **TAS** | Full tenant/branch policy, DLQ replay UI, OAuth for CRM/calendar. |
-| **CMS** | Real TCPA DNC registry, Spark/Flink batch disparity, BI dashboard. |
-| **PAS** | Streaming KPIs, real DW, scheduled email delivery. |
+| **FLS** | MLflow registry integration, shadow/canary ramp logic, propensity/exploration weighting, model cards, right-to-erasure propagation. |
+| **FUS** | Multi-provider failover (currently single provider with retry), Temporal durable scheduling (code exists, `TEMPORAL_ENABLED=false` by default), load test to 2k msg/s, live Postgres production validation. |
+| **TAS** | Full tenant/branch SSO/policy enforcement, DLQ replay UI (API exists), OAuth for CRM/calendar, 15k/s load test. |
+| **CMS** | Real TCPA DNC registry, Spark/Flink batch cluster integration (pure aggregation exists), BI dashboard UI (JSON API exists). |
+| **PAS** | Streaming KPI pipeline (Kafka contract exists, no Flink/Spark), real DW integration, scheduled email delivery (entity exists), live Postgres production validation. |
 
 ---
 
