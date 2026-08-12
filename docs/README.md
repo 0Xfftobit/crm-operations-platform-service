@@ -28,7 +28,8 @@ This directory contains the product, architecture, implementation, and testing d
 
 ## Testing
 
-- [TESTING.md](TESTING.md) — how to run each agent's test suite, lint/format commands, and CI notes.
+- [TESTING.md](TESTING.md) — how to run each agent's test suite, lint/format commands, CI notes, and SQL-mode smoke tests.
+- [test_matrix.md](test_matrix.md) — full master test matrix (82 modules, 663 tests across all agents and the gateway).
 - [ENGINE_TESTING_RESULTS.md](ENGINE_TESTING_RESULTS.md) — latest per-engine test results and smoke-test outcomes.
 - [RemainingWork.md](RemainingWork.md) — remaining implementation and configuration checklist before production.
 - [DEPLOYMENT_READINESS.md](DEPLOYMENT_READINESS.md) — deployment readiness assessment and production blockers.

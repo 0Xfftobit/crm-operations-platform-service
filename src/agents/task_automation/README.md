@@ -12,7 +12,7 @@ Automatically generates, assigns, and schedules CRM tasks based on lead events, 
 ## Quick start
 
 ```bash
-cd Task-Automation
+cd src/agents/task_automation
 cp .env.example .env
 uv sync
 chmod +x run.sh
@@ -21,6 +21,7 @@ chmod +x run.sh
 
 - Swagger UI: http://localhost:8011/docs
 - Health: http://localhost:8011/api/v1/health
+- Metrics: http://localhost:8011/api/v1/metrics
 
 ## Docker
 
@@ -51,7 +52,8 @@ docker compose up --build
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/health` | Liveness |
-| GET | `/api/v1/ready` | Readiness |
+| GET | `/api/v1/ready` | Readiness (storage, postgres, redis, kafka) |
+| GET | `/api/v1/metrics` | Prometheus metrics |
 | GET/POST | `/api/v1/rules` | Workflow rules CRUD |
 | POST | `/api/v1/events/ingest` | Trigger event → auto-create tasks |
 | GET | `/api/v1/tasks` | List CRM tasks |
@@ -111,7 +113,7 @@ During development, mock events via `POST /events/ingest`.
 ## Tests
 
 ```bash
-uv run pytest tests/ -q          # 78 passed, 1 skipped
+uv run pytest tests/ -q          # 135 passed, 1 skipped, 1 warning
 uv run ruff check app tests
 ```
 
@@ -120,6 +122,9 @@ uv run ruff check app tests
 - Bug-audit fixes: `doc_request_chain.complete_verification` defaults to `verified=False`; `POST /events/document-received` validates `workflow_id` and rejects non-string ids; `normalize_trigger`, `run_pipeline_stages`, `process_event`, and `_persist_and_emit` assert `trigger_id` is a `str`.
 - In-memory global state is now protected by `threading.RLock()` across `app/store.py`, `app/runs.py`, `app/ledger.py`, `app/events.py`, `app/event_history.py`, `app/dlq.py`, `app/metrics.py`, `app/guards.py`, `app/escalation.py`, `app/cron_triggers.py`, `app/kafka_consumer.py`, `app/kafka_consumer_group.py`, `app/messaging/kafka_bus.py`, `app/messaging/trigger_ingestor.py`, `app/integrations/temporal.py`, `app/integrations/activity_runner.py`, `app/integrations/feature_store.py`, `app/workflows/doc_request_chain.py`, `app/tracing.py`, `app/agents/llm_task_agent.py`, `app/persistence/memory_store.py`, and `app/persistence/redis_store.py`.
 - `tests/test_bug_audit.py` adds 6 regression tests.
+- Resilience: `ResilientClient` (exponential backoff, `X-Request-ID` propagation, `X-API-Key` forwarding) and `CircuitBreaker` for cross-agent calls to the Follow-up Sequences engine.
+- Observability: Prometheus-compatible `/api/v1/metrics` endpoint, request-ID middleware, in-memory metrics fallback, and health/readiness probes (`/api/v1/health`, `/api/v1/ready`) that report `storage`/`postgres`/`redis`/`kafka` status.
+- Kafka contract bus: producer/consumer in `app/messaging/kafka_bus.py` with canonical topics, per-deal partition keys, and in-memory fallback.
 
 ## System Architecture
 
@@ -141,7 +146,7 @@ curl -s http://localhost:8011/api/v1/architecture -H "X-API-Key: change-me-dev-k
 curl -s http://localhost:8011/api/v1/architecture/observability -H "X-API-Key: change-me-dev-key" | jq .
 ```
 
-Set `STORAGE_BACKEND=sqlite` for Postgres-schema persistence in dev.
+Set `STORAGE_BACKEND=sqlite` for SQLite persistence in dev, or `STORAGE_BACKEND=postgres` with `DATABASE_URL` for Postgres. `DB_AUTO_CREATE=true` creates the schema on startup in dev; production should run `alembic upgrade head`.
 
 ## Vision alignment
 

@@ -22,7 +22,9 @@ docker push $ACCT.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO:latest
 ## Secrets (Secrets Manager)
 
 Create a secret named `crequity-followup-sequence` with the keys the task definition references:
-`DATABASE_URL`, `API_KEY`, `SEQUENCE_SOURCE_URL`.
+`DATABASE_URL`, `API_KEY`, `SEQUENCE_SOURCE_URL`, `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_URL`.
+
+Use `STORAGE_GATEWAY=postgres` to persist sequences, contacts, enrollments, ledger, and engagement events via SQLAlchemy + psycopg + Alembic. `DB_AUTO_CREATE=false` in production (run `alembic upgrade head` before start); `DB_AUTO_CREATE=true` is allowed for dev/staging only.
 
 ```bash
 aws secretsmanager create-secret --name crequity-followup-sequence --region us-east-2 \

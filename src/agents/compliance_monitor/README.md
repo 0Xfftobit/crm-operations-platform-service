@@ -21,6 +21,9 @@ Three integrated sub-systems (memory-backed; Postgres/Redis/Kafka tiers wire in 
 
 - Bug-audit fixes: `coverage_sweep_interval_min`, `http_source.poll_once` non-numeric handling, `CaseUpdate.status`/`service._raise` `Literal`/typed, exact-year retention, float `days_left`, `coldstore.py` `encoding="utf-8"` and S3 range pagination.
 - In-memory repositories and shared state are protected with `threading.RLock()`.
+- Resilience: `ResilientClient` (exponential backoff, `X-Request-ID` propagation, `X-API-Key` forwarding) and `CircuitBreaker` on HTTP-poll upstream and third-party calls.
+- Observability: Prometheus-compatible `/api/v1/metrics` endpoint, request-ID middleware, in-memory metrics fallback, and health/readiness probes (`/api/v1/health`, `/api/v1/ready`) that report `storage`/`postgres`/`redis`/`kafka` status.
+- Kafka contract bus: producer/consumer in `app/kafka_bus.py` with canonical topics and in-memory fallback.
 
 > The protected attributes used by the disparity monitor are for **monitoring only** — never a
 > decision input (BR-2). Every state-changing path is written to the immutable ledger first.
@@ -62,11 +65,11 @@ below is required to run or test the domain.
 ## Run locally
 ```bash
 uv sync                 # create .venv + install
-uv run pytest -q        # 109 passed, 1 warning
+uv run pytest -q        # 179 passed, 1 warning
 make run                # API on http://127.0.0.1:8004 (reload)
 ```
 Open **http://127.0.0.1:8004/docs** for the interactive API. Health: `/api/v1/health`,
-readiness: `/api/v1/ready`, plus a bare `/health`.
+readiness: `/api/v1/ready`, Prometheus metrics: `/api/v1/metrics`, plus a bare `/health`.
 
 ## Docker (full stack)
 ```bash

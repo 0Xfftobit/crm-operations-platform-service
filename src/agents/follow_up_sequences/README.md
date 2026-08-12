@@ -36,24 +36,28 @@ via the gateways):
 - Bug-audit fixes: per-sequence frequency caps, Twilio/SendGrid/WhatsApp Business providers with mock fallback, 5-minute pre-send idempotency guard, `Literal` state validation, `Field(default_factory=dict)` for mutable defaults.
 - `SuppressionEvent` + `POST /api/v1/webhooks/suppression` permanently suppress contacts and stop active enrollments.
 - Repository methods, in-process event log, notification log, mock provider send log, and `FrequencyStore` counters are protected with `threading.RLock()`.
+- Resilience: `ResilientClient` (exponential backoff, `X-Request-ID` propagation, `X-API-Key` forwarding) and `CircuitBreaker` for cross-agent calls (CMS precheck).
+- Observability: Prometheus-compatible `/api/v1/metrics`, request-ID middleware, in-memory metrics fallback, and health/readiness probes (`/api/v1/health`, `/api/v1/ready`) that report `storage`/`postgres`/`redis`/`kafka` status.
+- PostgreSQL persistence: `STORAGE_GATEWAY=postgres` + `DATABASE_URL` using SQLAlchemy ORM, SQL repositories, and Alembic migrations; default remains `memory`; SQLite smoke tests pass.
 
 > The `/scheduler/tick` endpoint is the in-process stand-in for **Temporal** durable timers — it
-> advances every due enrollment. Temporal, Kafka, Redis frequency counters, and real channel
-> providers are deferred infra behind these interfaces.
+> advances every due enrollment. Temporal, Kafka brokered fan-out, Redis frequency counters, and real channel
+> providers are deferred infra behind these interfaces. PostgreSQL persistence is code-complete and SQLite smoke-tested.
 
 ## Stack
 - FastAPI + uvicorn, pydantic-settings, structlog
-- Optional tiers (lazy, degrade gracefully): Postgres (`[postgres]`), Redis (`[redis]`),
+- SQLAlchemy + Alembic + psycopg for `STORAGE_GATEWAY=postgres`; default `memory`
+- Optional tiers (lazy, degrade gracefully): Redis (`[redis]`),
   Kafka (`[kafka]`), OpenTelemetry (`[otel]`)
 - Tooling: **uv**, ruff (E,F,I,UP; line-length 100), pytest
 
 ## Run locally
 ```bash
 uv sync
-uv run pytest -q         # 50 passed, 1 warning
+uv run pytest -q         # 121 passed, 1 warning
 make run                 # API on http://127.0.0.1:8008 (reload)
 ```
-Open **http://127.0.0.1:8008/docs**. Health: `/api/v1/health`, readiness: `/api/v1/ready`.
+Open **http://127.0.0.1:8008/docs**. Health: `/api/v1/health`, readiness: `/api/v1/ready`, Prometheus metrics: `/api/v1/metrics`.
 
 ## Docker (local stack)
 ```bash
@@ -89,7 +93,7 @@ app/
   scheduler.py       # next_send_at (delay + best-time snap + legal-window clamp)
   abtest.py          # deterministic A/B variant allocation
   analytics.py       # per-step delivery/open/reply rates
-  repositories.py    # sequences/contacts/enrollments/ledger/engagement (tenant-keyed, memory)
+  repositories.py    # sequences/contacts/enrollments/ledger/engagement (tenant-keyed, memory default, SQLAlchemy/SQLite/Postgres dispatch)
   events.py          # consumed triggers + produced outreach signals + DLQ
   service.py         # orchestration: enroll→tick(guardrail→send→branch)→stop; consent/opt-out
   api/sequences.py   # REST router
@@ -99,10 +103,12 @@ Dockerfile · docker-compose.yml · Makefile · .env.example
 ```
 
 ## Configuration
-Env-driven (see [`.env.example`](.env.example)) — `STORAGE_GATEWAY` (memory|postgres), `CACHE_GATEWAY`
-(memory|redis), `EVENT_SOURCE_GATEWAY` (local|http|kafka), the §7 params (`QUIET_HOURS_*`,
-`FREQ_CAP_DAY/WEEK`, `MANUAL_OUTREACH_COOLDOWN_H`, `DEFAULT_TIMEZONE`, `LEAD_SCORE_THRESHOLD`), and
-`API_KEY`.
+Env-driven (see [`.env.example`](.env.example)) — `STORAGE_GATEWAY` (memory|postgres), `DATABASE_URL`
+(e.g. `postgresql+psycopg://…`), `DB_AUTO_CREATE=true` for dev auto-table creation
+(production should run `alembic upgrade head` and set `DB_AUTO_CREATE=false`),
+`CACHE_GATEWAY` (memory|redis), `EVENT_SOURCE_GATEWAY` (local|http|kafka), the §7 params
+(`QUIET_HOURS_*`, `FREQ_CAP_DAY/WEEK`, `MANUAL_OUTREACH_COOLDOWN_H`, `DEFAULT_TIMEZONE`,
+`LEAD_SCORE_THRESHOLD`), and `API_KEY`.
 
 ## Ports (across CREquity engines)
 market-opportunity 8002 · personalized-alerts 8003 · compliance-monitoring 8004 · lead-scoring 8005 ·

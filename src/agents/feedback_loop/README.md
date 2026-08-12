@@ -38,6 +38,9 @@ P0–P3 of the FLS ticket, plus the CEAAPSS-559 (Model Retraining) and CEAAPSS-5
 
 - Bug-audit fixes: A/B split sums to 100%, guardrail fallback only fires when no guardrail metric is configured, SHA-256 variant hashing, `timedelta` drift window, `joblib` serialization, `_precision_recall_f1` 4-tuple return type.
 - All in-memory repositories plus the drift reference store now use `threading.RLock()`.
+- Resilience: `ResilientClient` (exponential backoff, `X-Request-ID` propagation, `X-API-Key` forwarding) and `CircuitBreaker` (open after 3 consecutive failures, 30s timeout, half-open probe) on cross-agent calls.
+- Observability: Prometheus-compatible `/api/v1/metrics` endpoint, request-ID middleware, and in-memory metrics fallback.
+- PostgreSQL persistence: `STORAGE_GATEWAY=postgres` + `DATABASE_URL` with SQLAlchemy ORM, SQL repositories, and Alembic migrations; default remains `memory`; SQLite works for local SQL-mode smoke tests.
 
 ## Architecture
 
@@ -146,7 +149,8 @@ All routes are under `/api/v1`. The API gateway proxies `/<agent-slug>/*` to thi
 | Method | Path | Summary |
 |--------|------|---------|
 | `GET` | `/health` | Liveness |
-| `GET` | `/ready` | Readiness |
+| `GET` | `/ready` | Readiness (storage, postgres, redis, kafka) |
+| `GET` | `/metrics` | Prometheus metrics |
 | `GET` | `/stats` | Capture counts and label match rate |
 
 Write/ops endpoints require the `X-API-Key` header configured by `API_KEY`.
@@ -162,7 +166,10 @@ Copy `.env.example` to `.env` and adjust as needed. Key variables:
 | `LOG_LEVEL` | `INFO` | structlog level |
 | `API_KEY` | `change-me-dev-key` | Key for `X-API-Key` header on write endpoints |
 | `API_PREFIX` | `/api/v1` | Route prefix |
-| `STORAGE_BACKEND` | `memory` | `memory` (default) or `disk` |
+| `STORAGE_GATEWAY` | `memory` | `memory` (default) or `postgres` (requires `DATABASE_URL`) |
+| `STORAGE_BACKEND` | `memory` | `memory` (default) or `disk` for dataset/model snapshots |
+| `DATABASE_URL` | (empty) | PostgreSQL+psycopg URL when `STORAGE_GATEWAY=postgres` |
+| `DB_AUTO_CREATE` | `false` | Create SQL tables on startup (dev only; prod uses `alembic upgrade head`) |
 | `DATA_DIR` | `./data/feedback_loop` | Local path for `disk` snapshots |
 | `MODEL_SNAPSHOT_DIR` | `./data/feedback_loop/models` | Local path for model artifacts |
 | `WINDOW_RESPONSE_DAYS` | `7` | `email.replied`-style window |
@@ -197,7 +204,7 @@ PYTHONPATH=. uvicorn app.main:app --host 127.0.0.1 --port 8009 --reload
 
 Open **http://127.0.0.1:8009/docs** for the interactive OpenAPI UI.
 
-Health: `/api/v1/health`, readiness: `/api/v1/ready`.
+Health: `/api/v1/health`, readiness: `/api/v1/ready`, Prometheus metrics: `/api/v1/metrics`.
 
 ## Testing
 
@@ -205,7 +212,8 @@ The agent has an isolated pytest suite under `tests/`:
 
 ```bash
 cd src/agents/feedback_loop
-PYTHONPATH=. pytest tests -q          # 25 passed, 1 warning
+uv run pytest -q                       # 92 passed, 11 warnings
+PYTHONPATH=. pytest tests -q           # 92 passed, 11 warnings
 ```
 
 It also supports linting and formatting via `ruff`:
@@ -216,12 +224,14 @@ make fmt       # ruff format app tests
 make test      # uv run pytest -q
 ```
 
-The root monorepo suite validates gateway wiring:
+The root monorepo suite validates gateway wiring and cross-agent header propagation:
 
 ```bash
 cd ../..
-pytest tests -q
+uv run --extra dev pytest -q tests         # 16 passed, 1 warning
 ```
+
+See `docs/test_matrix.md` for the full 82-module test matrix.
 
 ## Docker
 
@@ -271,15 +281,16 @@ The Dockerfile uses `uv` for deterministic dependency resolution and runs `uvico
 - `app/abtest.py` — consistent-hash variant allocation, power analysis, significance testing
 - `app/service.py` — orchestration layer used by API routes
 - `app/api/feedback.py` — REST routes
-- `app/repositories.py` — in-memory repository implementations (swappable for DW/Postgres/S3)
+- `app/repositories.py` — in-memory repository implementations with SQLAlchemy/SQLite/Postgres dispatch
 
 ## Roadmap
 
-1. Replace in-memory repositories with production persistence (Postgres + S3/DW).
-2. Add Kafka consumer adapter for event-driven capture.
-3. Integrate real MLflow model registry.
-4. Add shadow / canary rollout with gradual traffic ramp and automatic rollback.
-5. Add propensity / explore-exploit sampling to avoid feedback-loop bias.
-6. Add right-to-erasure propagation for GDPR/CCPA compliance.
-7. Build an admin UI / dashboard for A/B test results, drift alerts, and model cards.
-8. Wire external notification channels (Slack/email) for retraining lifecycle events.
+1. Validate live PostgreSQL integration in staging/production (Postgres SQL persistence is code-complete; SQLite smoke tests pass).
+2. Move model/dataset artifacts to S3/DW-backed storage for multi-node deployments.
+3. Add Kafka consumer adapter for event-driven capture (producer/consumer contract tests pass; brokered fan-out is P4).
+4. Integrate real MLflow model registry.
+5. Add shadow / canary rollout with gradual traffic ramp and automatic rollback.
+6. Add propensity / explore-exploit sampling to avoid feedback-loop bias.
+7. Add right-to-erasure propagation for GDPR/CCPA compliance.
+8. Build an admin UI / dashboard for A/B test results, drift alerts, and model cards.
+9. Wire external notification channels (Slack/email) for retraining lifecycle events.

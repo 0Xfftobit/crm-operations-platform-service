@@ -18,7 +18,10 @@ P0–P3 of the PAS ticket, plus the ROI Attribution and Channel Effectiveness su
 ## Latest P4 Hardening
 
 - Bug-audit fixes: ISO-8601 reconciliation windows (`app/reconciliation.py` + `app/period_utils.py`), time-decay attribution uses the actual conversion `funded_at` (`app/attribution.py`), `typing.List` annotation fix, duplicate branch removal in `build_channel_effectiveness`, `_in_period_or_skip` for missing timestamps, and `threading.RLock()` on every in-memory repository.
-- `tests/test_bug_audit.py` adds 7 regression tests; the suite is now `42/42` passing.
+- `tests/test_bug_audit.py` adds 7 regression tests; the suite is now `120/120` passing.
+- Resilience: `ResilientClient` (exponential backoff, `X-Request-ID` propagation, `X-API-Key` forwarding) and `CircuitBreaker` for cross-agent fan-out to the Feedback Loop.
+- Observability: Prometheus-compatible `/api/v1/metrics` endpoint, request-ID middleware, in-memory metrics fallback, and health/readiness probes (`/api/v1/health`, `/api/v1/ready`).
+- PostgreSQL persistence: `STORAGE_GATEWAY=postgres` + `DATABASE_URL` with SQLAlchemy ORM, SQL repositories, and Alembic migrations; default remains `memory`; SQLite smoke tests pass.
 
 ## Architecture
 
@@ -330,7 +333,10 @@ Copy `.env.example` to `.env` and adjust as needed. Key variables:
 | `LOG_JSON` | `false` | JSON vs console logs |
 | `API_KEY` | `change-me-dev-key` | Key for `X-API-Key` header on write endpoints |
 | `API_PREFIX` | `/api/v1` | Route prefix |
-| `STORAGE_BACKEND` | `memory` | `memory` (default) or `disk` |
+| `STORAGE_GATEWAY` | `memory` | `memory` (default) or `postgres` (requires `DATABASE_URL`) |
+| `STORAGE_BACKEND` | `memory` | `memory` (default) or `disk` for snapshots |
+| `DATABASE_URL` | (empty) | PostgreSQL+psycopg URL when `STORAGE_GATEWAY=postgres` |
+| `DB_AUTO_CREATE` | `false` | Create SQL tables on startup (dev only; prod uses `alembic upgrade head`) |
 | `DATA_DIR` | `./data/performance_analytics` | Local path for `disk` snapshots |
 | `ATTRIBUTION_LOOKBACK_D` | `90` | Attribution window |
 | `ATTRIBUTION_DEFAULT_MODEL` | `time_decay` | Default credit model |
@@ -350,7 +356,7 @@ make run                 # API on http://127.0.0.1:8007 (reload)
 
 Open **http://127.0.0.1:8007/docs** for the interactive OpenAPI UI.
 
-Health: `/api/v1/health`, readiness: `/api/v1/ready`.
+Health: `/api/v1/health`, readiness: `/api/v1/ready`, Prometheus metrics: `/api/v1/metrics`.
 
 ## Testing
 
@@ -358,7 +364,7 @@ The agent has an isolated pytest suite under `tests/`:
 
 ```bash
 cd src/agents/performance_analytics
-uv run pytest tests -q          # 42 passed, 1 warning
+uv run pytest tests -q          # 120 passed, 1 warning
 uv run pytest tests -v          # per-test verbose output
 ```
 
@@ -382,12 +388,12 @@ For more detail, see `docs/testing.md`.
 - `app/pdf.py` — minimal stdlib CSV + PDF export.
 - `app/service.py` — orchestration layer used by API routes.
 - `app/api/analytics.py` — REST routes.
-- `app/repositories.py` — in-memory repository implementations (swappable for DW/Postgres/S3).
+- `app/repositories.py` — in-memory repository implementations with SQLAlchemy/SQLite/Postgres dispatch.
 
 ## Roadmap
 
-1. Replace in-memory repositories with production persistence (Postgres/S3/DW).
-2. Add Kafka consumer for streaming event ingestion.
+1. Validate live PostgreSQL integration in staging/production (Postgres SQL persistence is code-complete; SQLite smoke tests pass).
+2. Add object/S3 storage for exported CSV/PDF artifacts.
 3. Implement true dbt-style semantic layer and metric lineage.
 4. Replace simplified Markov/Shapley with production-grade channel attribution.
 5. Add BI/dashboard rendering (Looker/Superset/Metabase integration).

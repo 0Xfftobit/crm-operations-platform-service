@@ -22,7 +22,9 @@ docker push $ACCT.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO:latest
 ## Secrets (Secrets Manager)
 
 Create a secret named `crequity-compliance-monitoring` with the keys the task definition references:
-`DATABASE_URL`, `API_KEY`, `AUDIT_SOURCE_URL`.
+`DATABASE_URL`, `API_KEY`, `AUDIT_SOURCE_URL`, `KAFKA_BOOTSTRAP_SERVERS`, `REDIS_URL`.
+
+Use `STORAGE_GATEWAY=postgres` to persist audit ledgers, consent, alerts, cases, and disclosures via SQLAlchemy + psycopg. `DB_AUTO_CREATE=false` in production (run `alembic upgrade head` before start); `DB_AUTO_CREATE=true` is allowed for dev/staging only.
 
 ```bash
 aws secretsmanager create-secret --name crequity-compliance-monitoring --region us-east-2 \
