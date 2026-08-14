@@ -19,7 +19,17 @@ def get_engine() -> Engine:
     if url.startswith("sqlite"):
         return create_engine(
             url, future=True, connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    return create_engine(url, future=True, pool_pre_ping=True)
+    kwargs: dict = {"future": True, "pool_pre_ping": True}
+    _schema = get_settings().db_schema
+    if _schema:
+        # shared-Neon deployment: one database, one schema per engine (search_path via libpq)
+        kwargs["connect_args"] = {"options": f"-csearch_path={_schema}"}
+    engine = create_engine(url, **kwargs)
+    if get_settings().db_auto_create:
+        _ensure_schema(engine, url)
+        from app.db.orm import Base
+        Base.metadata.create_all(engine)
+    return engine
 
 
 @lru_cache
@@ -33,8 +43,10 @@ def session() -> Session:
 
 
 def create_all() -> None:
+    engine = get_engine()
+    _ensure_schema(engine, get_settings().database_url)
     from app.db.orm import Base
-    Base.metadata.create_all(get_engine())
+    Base.metadata.create_all(engine)
 
 
 def reset_engine() -> None:
@@ -58,3 +70,10 @@ def postgres_health() -> dict[str, str]:
         return {"status": "ok"}
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "error": str(exc)}
+
+
+def _ensure_schema(engine, url: str) -> None:
+    _schema = get_settings().db_schema
+    if _schema and not url.startswith("sqlite"):
+        with engine.begin() as c:
+            c.exec_driver_sql(f'CREATE SCHEMA IF NOT EXISTS "{_schema}"')

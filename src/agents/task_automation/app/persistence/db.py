@@ -257,7 +257,11 @@ def _get_postgres_conn():
         if not url:
             raise RuntimeError("DATABASE_URL is required when STORAGE_BACKEND=postgres")
         _pg_conn = psycopg.connect(url, row_factory=dict_row, autocommit=False)
+        _schema = get_settings().db_schema
         with _pg_conn.cursor() as cur:
+            if _schema:
+                cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{_schema}"')
+                cur.execute(f'SET search_path TO "{_schema}"')
             cur.execute(SCHEMA_POSTGRES)
         _pg_conn.commit()
         _migrate_schema(_pg_conn, is_postgres=True)

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     storage_backend: str = Field("memory", alias="STORAGE_BACKEND")
     database_path: str = Field("./data/tasks.db", alias="TASK_AUTOMATION_DB_PATH")
     database_url: str = Field("", alias="DATABASE_URL")
+    db_auto_create: bool = Field(False, alias="DB_AUTO_CREATE")
+    db_schema: str = Field("", alias="DB_SCHEMA")  # shared-Neon: one schema per engine
 
     scheduler_enabled: bool = Field(True, alias="SCHEDULER_ENABLED")
     scheduler_interval_s: int = Field(60, alias="SCHEDULER_INTERVAL_S", ge=5)
