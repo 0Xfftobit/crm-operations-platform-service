@@ -11,11 +11,13 @@ import httpx
 import structlog
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from config.logging import configure as configure_logging
 from config.settings import Settings, get_settings
 from src.api.metrics import MetricsMiddleware, cross_agent_calls_total, generate_metrics
+from src.api.openapi_aggregate import build_aggregated_openapi
 from src.api.middleware.request_id import RequestIDMiddleware
 
 configure_logging(get_settings().log_level)
@@ -61,9 +63,15 @@ def require_api_key(
         )
 
 
+_TITLE = "crm-operations-platform-service"
+_SUMMARY = "Feedback loop, performance analytics, compliance, task automation, follow-ups."
+
 app = FastAPI(
-    title="crm-operations-platform-service",
-    summary="Feedback loop, performance analytics, compliance, task automation, follow-ups.",
+    title=_TITLE,
+    summary=_SUMMARY,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 # Restrictive CORS: configured origins only; wildcard rejected by Settings validator in prod.
@@ -131,6 +139,28 @@ async def metrics() -> Response:
         generate_metrics(),
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )
+
+
+@app.get("/openapi.json", include_in_schema=False)
+async def openapi_json(settings: Settings = Depends(get_settings)):
+    aggregated = await build_aggregated_openapi(
+        title=_TITLE,
+        summary=_SUMMARY,
+        gateway_schema=app.openapi(),
+        agents=AGENTS,
+        upstream_fn=lambda a: _upstream(a, settings),
+    )
+    return JSONResponse(aggregated)
+
+
+@app.get("/docs", include_in_schema=False, response_class=HTMLResponse)
+async def swagger_docs():
+    return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{_TITLE} — all agents")
+
+
+@app.get("/redoc", include_in_schema=False, response_class=HTMLResponse)
+async def redoc_docs():
+    return get_redoc_html(openapi_url="/openapi.json", title=f"{_TITLE} — all agents")
 
 
 _SLUG_TO_AGENT = {s: a for a, s in AGENTS.items()}

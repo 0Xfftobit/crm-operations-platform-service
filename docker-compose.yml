@@ -1,15 +1,30 @@
-name: crm-operations-platform-service
-
-# One project, one container, one port. The unified image bundles all agents + the gateway; a
-# process supervisor runs them internally (agents on 127.0.0.1:8001+, gateway public on 8080).
-# Previous per-agent microservices layout preserved in docker-compose.services.yml.
+# One CRM service (unified image: gateway + agents) on a single EC2 instance.
+# 1. put env on the instance:  sudo install -m 600 deploy/instance.env.example /etc/crm/env && sudo vi /etc/crm/env
+# 2. build + run:              docker compose up -d --build
+# 3. verify:                   curl -s localhost:8080/health
+# The instance needs outbound internet (Neon egress). To PULL a prebuilt image from ECR instead of
+# building here, delete the `build:` line and set `image:` to the ECR URI, then `docker compose pull`.
 services:
-  crm-operations-platform-service:
+  crm-operations:
     build: .
-    image: crm-operations-platform-service:latest
-    environment:
-      API_KEY: ${API_KEY:-change-me-dev-key}
-      DATABASE_URL: ${DATABASE_URL:-}
+    image: crm-operations:latest
+    container_name: crm-operations
+    restart: always
     ports:
-      - "${GATEWAY_PORT:-8080}:8080"
-    restart: unless-stopped
+      - "8080:8080"
+    env_file:
+      - /etc/crm/env            # DATABASE_URL (+ API_KEY, optional keys) — see deploy/instance.env.example
+    cpus: "1.0"
+    mem_limit: 2g
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/health',timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -8,16 +8,24 @@ imports. Empty base URL → memory-mode exports so supervisord's %(ENV_*)s alway
 """
 import sys
 
-# durable agent (has SQL tables) → (schema, sqlalchemy driver). Others run in-memory.
+# durable agent (has SQL tables) → (schema, driver). `psycopg` → SQLAlchemy URL (postgresql+psycopg://);
+# `libpq` → plain postgresql:// for agents that call psycopg.connect() directly (it rejects the +driver
+# form). Others (no entry) run in-memory. Schema is carried on the URL via a search_path option, so no
+# agent needs DB_SCHEMA: SQLAlchemy engines connect into it, and raw-psycopg agents inherit it too.
 DURABLE = {
-    "compliance_monitor": ("compliance_monitor", "psycopg"),
+    "compliance_monitor":    ("compliance_monitor",    "psycopg"),
+    "follow_up_sequences":   ("follow_up_sequences",   "psycopg"),
+    "feedback_loop":         ("feedback_loop",         "psycopg"),
+    "performance_analytics": ("performance_analytics", "psycopg"),
+    "task_automation":       ("task_automation",       "libpq"),  # raw psycopg.connect → plain URL
 }
 
 
 def _normalize(url: str, driver: str) -> str:
     for prefix in ("postgresql+psycopg://", "postgresql+asyncpg://", "postgresql://", "postgres://"):
         if url.startswith(prefix):
-            return f"postgresql+{driver}://" + url[len(prefix):]
+            body = url[len(prefix):]
+            return f"postgresql://{body}" if driver == "libpq" else f"postgresql+{driver}://{body}"
     return url
 
 

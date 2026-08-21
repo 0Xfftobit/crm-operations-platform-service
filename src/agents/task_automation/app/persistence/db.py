@@ -9,8 +9,19 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import get_settings
+from app.schemas.enums import PRIORITY_RANK
 
 logger = logging.getLogger(__name__)
+
+
+def _priority_int(p: Any) -> int:
+    """Rule priority column is INTEGER; the API sends a TaskPriority string enum (low/normal/high/
+    urgent). Map the enum via PRIORITY_RANK, pass numeric values through, default to 100."""
+    if p is None:
+        return 100
+    s = str(getattr(p, "value", p))
+    return int(s) if s.isdigit() else PRIORITY_RANK.get(s, 100)
+
 
 _sqlite_conn: sqlite3.Connection | None = None
 _pg_conn: Any = None
@@ -414,7 +425,7 @@ def persist_rule(rule: dict[str, Any]) -> None:
         rule.get("version"),
         rule.get("trigger_event"),
         json.dumps(event_types),
-        int(rule.get("priority") or 100),
+        _priority_int(rule.get("priority")),
         rule.get("rollout_status"),
         float(rule.get("canary_percent") or rule.get("canary_pct") or 0),
         rule.get("created_by", "system"),
