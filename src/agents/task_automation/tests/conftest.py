@@ -1,5 +1,14 @@
-"""Test fixtures."""
 from __future__ import annotations
+import os
+
+# Tests must never touch the live shared-Neon database the agent's .env
+# points at: pin in-memory storage before any app module reads settings.
+# (env vars override the .env file in pydantic-settings; per-test fixtures
+# that need sqlite/postgres set their own env explicitly.)
+os.environ["STORAGE_BACKEND"] = "memory"
+os.environ["DATABASE_URL"] = ""
+
+"""Test fixtures."""
 
 import pytest
 from fastapi.testclient import TestClient
