@@ -17,7 +17,8 @@ def _use_sqlite(monkeypatch, tmp_path):
     from app.db import engine as eng
     eng.reset_engine()
     import app.repositories as repos
-    repos._sql_repos.clear()
+    # older builds cached SQL repos in _sql_repos; newer ones construct fresh
+    getattr(repos, "_sql_repos", {}).clear()
 
 
 def test_sql_repositories_round_trip(monkeypatch, tmp_path):
@@ -35,10 +36,10 @@ def test_sql_repositories_round_trip(monkeypatch, tmp_path):
         enrollment_id="e1", contact_id="c1", sequence_id="s1", tenant_id="t", state="active"))
     repos.get_ledger_repository().add(OutreachRecord(
         id="r1", enrollment_id="e1", contact_id="c1", tenant_id="t", step_id="step0",
-        occurrence=1, status="sent"))
+        occurrence=1, status="sent", channel="email"))
 
-    # drop the cached repo instances → forces a fresh read straight from the DB (durability check)
-    repos._sql_repos.clear()
+    # drop any cached repo instances → forces a fresh read straight from the DB (durability check)
+    getattr(repos, "_sql_repos", {}).clear()
     assert repos.get_sequence_repository().get("s1", "t").name == "Welcome"
     assert repos.get_enrollment_repository().get("e1").state == "active"
     assert repos.get_ledger_repository().sent_exists("e1", "step0", 1) is True

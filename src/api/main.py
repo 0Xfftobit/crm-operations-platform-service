@@ -163,6 +163,11 @@ async def redoc_docs():
     return get_redoc_html(openapi_url="/openapi.json", title=f"{_TITLE} — all agents")
 
 
+from src.api.zoho_relay import router as _zoho_router  # noqa: E402 — static-body Zoho intake
+
+# Same gate as the proxy: the relay must not be the one unauthenticated door.
+app.include_router(_zoho_router, dependencies=[Depends(require_api_key)])
+
 _SLUG_TO_AGENT = {s: a for a, s in AGENTS.items()}
 
 
