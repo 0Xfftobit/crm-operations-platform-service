@@ -8,6 +8,7 @@ WORKDIR /app
 COPY requirements.all.txt ./
 RUN pip install --no-cache-dir -r requirements.all.txt
 COPY src ./src
+COPY config ./config
 COPY deploy ./deploy
 COPY deploy/supervisord.conf /etc/supervisord.conf
 RUN chmod +x /app/deploy/entrypoint.sh
