@@ -1,6 +1,14 @@
+from __future__ import annotations
+import os
+
+# Tests must never touch the live shared-Neon database the agent's .env
+# points at: force in-memory storage before any app module reads settings.
+os.environ["STORAGE_BACKEND"] = "memory"
+os.environ["STORAGE_GATEWAY"] = "memory"
+os.environ["DATABASE_URL"] = ""
+
 """Test fixtures for the Performance Analytics System."""
 
-from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,8 +27,11 @@ BASE = "/api/v1"
 def _reset_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("API_KEY", API_KEY)
     monkeypatch.setenv("STORAGE_BACKEND", "memory")
+    # env vars override the .env file, which points at live Neon; deleting the
+    # var would fall back to it, so pin memory/empty explicitly.
+    monkeypatch.setenv("STORAGE_GATEWAY", "memory")
+    monkeypatch.setenv("DATABASE_URL", "")
     for env_var in (
-        "DATABASE_URL",
         "REDIS_URL",
         "CACHE_GATEWAY",
         "IDEMPOTENCY_BACKEND",

@@ -1,3 +1,10 @@
+import os
+
+# Tests must never touch the live shared-Neon database the agent's .env
+# points at: force in-memory storage before any app module reads settings.
+os.environ["STORAGE_BACKEND"] = "memory"
+os.environ["DATABASE_URL"] = ""
+
 """Test fixtures for the Feedback Loop System."""
 
 import pytest

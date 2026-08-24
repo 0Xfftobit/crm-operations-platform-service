@@ -13,7 +13,7 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never
 
 # 1) deps only (cached until pyproject/uv.lock change) — include the optional tiers
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project --extra redis --extra kafka --extra otel
 
 # 2) the app + install the project

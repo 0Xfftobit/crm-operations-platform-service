@@ -1,0 +1,24 @@
+# Unified build context = repo root: gateway (src/api) + all agent source (src/agents/*), minus
+# venvs, caches, tests, and local runtime artifacts.
+.git
+.gitignore
+**/.venv
+venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/tests
+.env
+**/.env
+!**/.env.example
+**/*.db
+**/*.sqlite3
+**/mlruns
+data
+generated
+Dockerfile*
+docker-compose*.yml
+.dockerignore

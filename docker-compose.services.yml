@@ -1,0 +1,47 @@
+name: crm-operations-platform-service
+
+# Monorepo-of-services: each agent is its original engine (kept intact under
+# src/agents/<name>/, built from its own Dockerfile) serving on PORT=8000; the gateway
+# proxies /<agent-slug>/* to each. Engines default to in-memory backends so this comes
+# up without external services — point each at a DB via its own env for durability.
+
+x-agent-env: &agent-env
+  PORT: "8000"
+  WEB_CONCURRENCY: "1"
+  LOG_LEVEL: "info"
+
+services:
+  gateway:
+    build: .
+    environment:
+      API_KEY: ${API_KEY:-change-me-dev-key}
+      COMPLIANCE_MONITOR_URL: http://compliance_monitor:8000
+      TASK_AUTOMATION_URL: http://task_automation:8000
+      FOLLOW_UP_SEQUENCES_URL: http://follow_up_sequences:8000
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+    depends_on:
+      - compliance_monitor
+      - task_automation
+      - follow_up_sequences
+    restart: unless-stopped
+
+  compliance_monitor:
+    build: { context: ./src/agents/compliance_monitor }
+    environment: *agent-env
+    expose: ["8000"]
+    restart: unless-stopped
+
+  task_automation:
+    build: { context: ./src/agents/task_automation }
+    environment: *agent-env
+    expose: ["8000"]
+    restart: unless-stopped
+
+  follow_up_sequences:
+    build: { context: ./src/agents/follow_up_sequences }
+    environment: *agent-env
+    expose: ["8000"]
+    restart: unless-stopped
+
+  # scaffold agents (no source engine yet): feedback_loop, performance_analytics — add services once implemented.

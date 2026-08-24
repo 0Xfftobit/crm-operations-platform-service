@@ -1,0 +1,14 @@
+# Unified dependency union — all 3 agents + gateway + supervisor. (kafka/redis are lazy/optional
+# and omitted; temporalio IS imported at load by task_automation so it's required.)
+temporalio>=1.7
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+pydantic-settings>=2.6
+httpx>=0.28
+structlog>=24.4
+python-dotenv>=1.0
+sqlalchemy>=2.0
+alembic>=1.13
+psycopg[binary]>=3.1
+supervisor>=4.2

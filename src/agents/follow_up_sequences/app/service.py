@@ -197,11 +197,11 @@ def _process_send(enrollment: Enrollment, contact: Contact, seq: SequenceDef, st
     occ = _occurrence(enrollment, step, now)
 
     if decision.disposition == "stop":                       # opt-out / DNC → terminal
-        _ledger(enrollment, step, "blocked", occ, contact, block_reason=decision.reason, now=now)
+        _ledger(enrollment, step, "blocked", occ, contact, now=now, block_reason=decision.reason)
         _finish(enrollment, "opt_out" if decision.reason == "opted_out" else decision.reason, now)
         return "stopped"
     if decision.disposition == "hold":                       # quiet-hours / freq-cap / consent
-        _ledger(enrollment, step, "held", occ, contact, block_reason=decision.reason, now=now)
+        _ledger(enrollment, step, "held", occ, contact, now=now, block_reason=decision.reason)
         enrollment.next_action_at = decision.retry_at or now
         get_enrollment_repository().put(enrollment)
         return "held"
@@ -225,8 +225,8 @@ def _process_send(enrollment: Enrollment, contact: Contact, seq: SequenceDef, st
 
     res = providers.deliver(contact, step.channel, body, max_attempts=settings.provider_retry_max)
     status = "sent" if res.success else "failed"
-    _ledger(enrollment, step, status, occ, contact, template=template, rendered=body,
-            provider=res.provider, attempts=res.attempts, variant=variant, now=now)
+    _ledger(enrollment, step, status, occ, contact, now=now, template=template, rendered=body,
+            provider=res.provider, attempts=res.attempts, variant=variant)
     if res.success:
         get_freq().increment(contact.tenant_id, contact.contact_id, seq.sequence_id, now)
         enrollment.steps_sent += 1
@@ -278,15 +278,16 @@ def _process_branch(enrollment: Enrollment, contact: Contact, seq: SequenceDef, 
 
 
 def _ledger(enrollment: Enrollment, step: Step, status: str, occurrence: int, contact: Contact, *,
-            template: str = "", rendered: str = "", provider: str = "", attempts: int = 1,
-            block_reason: str = "", variant: str = "", now: datetime | None = None) -> None:
-    sent_at = now if now is not None else _now()
+            now: datetime, template: str = "", rendered: str = "", provider: str = "",
+            attempts: int = 1, block_reason: str = "", variant: str = "") -> None:
+    # sent_at MUST use the tick's ``now`` (not wall-clock) so timed branch windows
+    # (no_open_after:PT48H, etc.) and elapsed calcs are correct under injected time.
     get_ledger_repository().add(OutreachRecord(
         id=uuid4().hex, enrollment_id=enrollment.enrollment_id, contact_id=enrollment.contact_id,
         tenant_id=enrollment.tenant_id, step_id=step.id, channel=step.channel,
         consent_basis=contact.consent_basis, status=status, occurrence=occurrence,   # type: ignore[arg-type]
         template=template, rendered=rendered, provider=provider, attempts=attempts,
-        block_reason=block_reason, sent_at=sent_at))
+        block_reason=block_reason, sent_at=now))
 
 
 def _finish(enrollment: Enrollment, reason: str, now: datetime, *, state: str = "stopped") -> None:
