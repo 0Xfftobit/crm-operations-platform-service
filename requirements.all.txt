@@ -12,3 +12,9 @@ sqlalchemy>=2.0
 alembic>=1.13
 psycopg[binary]>=3.1
 supervisor>=4.2
+# feedback_loop imports numpy/pandas/sklearn/joblib at load (BUG-01: agent crash-looped); redis for task_automation
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.5
+joblib>=1.4
+redis>=5.2

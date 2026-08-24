@@ -35,8 +35,14 @@ def session() -> Session:
 
 def create_all() -> None:
     from app.db.orm import Base
+    from app.db.schema_drift import ensure_columns
 
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    # Existing tables never gain columns from create_all — repair additive drift
+    # (BUG-04: enrollments.sequence_id missing on the shared Neon schema).
+    with engine.begin() as conn:
+        ensure_columns(conn, Base.metadata)
 
 
 def reset_engine() -> None:
