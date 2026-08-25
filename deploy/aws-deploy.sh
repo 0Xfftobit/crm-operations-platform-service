@@ -33,19 +33,21 @@ fi
 
 TD_ARN=$(aws ecs describe-services --cluster "$CLUSTER" --region "$REGION" \
   --services "$SERVICE" --query 'services[0].taskDefinition' --output text)
+_TDC="$(mktemp)"; _TDN="$(mktemp)"
 aws ecs describe-task-definition --region "$REGION" --task-definition "$TD_ARN" \
-  --query 'taskDefinition' --output json > /tmp/td-current.json
-python3 - "$IMAGE" <<'PYEOF'
+  --query 'taskDefinition' --output json > "$_TDC"
+python3 - "$IMAGE" "$_TDC" "$_TDN" <<'PYEOF'
 import json, sys
-td = json.load(open('/tmp/td-current.json'))
+image, tdc, tdn = sys.argv[1], sys.argv[2], sys.argv[3]
+td = json.load(open(tdc))
 for k in ("taskDefinitionArn", "revision", "status", "requiresAttributes",
           "compatibilities", "registeredAt", "registeredBy"):
     td.pop(k, None)
-td["containerDefinitions"][0]["image"] = sys.argv[1]
-json.dump(td, open('/tmp/td-new.json', 'w'))
+td["containerDefinitions"][0]["image"] = image
+json.dump(td, open(tdn, "w"))
 PYEOF
 NEW_TD=$(aws ecs register-task-definition --region "$REGION" \
-  --cli-input-json file:///tmp/td-new.json \
+  --cli-input-json "file://$_TDN" \
   --query 'taskDefinition.taskDefinitionArn' --output text)
 echo "==> registered ${NEW_TD##*/}"
 
