@@ -153,14 +153,30 @@ async def openapi_json(settings: Settings = Depends(get_settings)):
     return JSONResponse(aggregated)
 
 
+# ── Site icon (purpose-matched) ──
+_FAVICON_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\" role=\"img\" aria-label=\"CRM Operations Platform\"><rect width=\"64\" height=\"64\" rx=\"14\" fill=\"#2C64DD\"/><circle cx=\"32\" cy=\"32\" r=\"10\" fill=\"none\" stroke=\"#ffffff\" stroke-width=\"6\"/><g stroke=\"#ffffff\" stroke-width=\"5\" stroke-linecap=\"round\"><line x1=\"32\" y1=\"10\" x2=\"32\" y2=\"16\"/><line x1=\"32\" y1=\"48\" x2=\"32\" y2=\"54\"/><line x1=\"10\" y1=\"32\" x2=\"16\" y2=\"32\"/><line x1=\"48\" y1=\"32\" x2=\"54\" y2=\"32\"/><line x1=\"16.5\" y1=\"16.5\" x2=\"20.5\" y2=\"20.5\"/><line x1=\"43.5\" y1=\"43.5\" x2=\"47.5\" y2=\"47.5\"/><line x1=\"47.5\" y1=\"16.5\" x2=\"43.5\" y2=\"20.5\"/><line x1=\"20.5\" y1=\"43.5\" x2=\"16.5\" y2=\"47.5\"/></g></svg>"
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon_svg():
+    return Response(_FAVICON_SVG, media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon_ico():
+    return Response(_FAVICON_SVG, media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.get("/docs", include_in_schema=False, response_class=HTMLResponse)
 async def swagger_docs():
-    return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{_TITLE} — all agents")
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="CRM Operations Platform", swagger_favicon_url="/favicon.svg")
 
 
 @app.get("/redoc", include_in_schema=False, response_class=HTMLResponse)
 async def redoc_docs():
-    return get_redoc_html(openapi_url="/openapi.json", title=f"{_TITLE} — all agents")
+    return get_redoc_html(openapi_url="/openapi.json", title="CRM Operations Platform", redoc_favicon_url="/favicon.svg")
 
 
 from src.api.zoho_relay import router as _zoho_router  # noqa: E402 — static-body Zoho intake
